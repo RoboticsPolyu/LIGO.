@@ -18,10 +18,45 @@ enum class RtkSignalBand : uint8_t
   Secondary = 2,
   L5 = 5,
   Extra = 6,
-  Wide = 8
+  Wide = 8,
+  WideLane = 9,
+  NarrowLane = 10
 };
 
 constexpr double kRtkFrequencyToleranceHz = 1.0e5;
+
+struct RtkLaneCombination
+{
+  double phase_m = 0.0;
+  double variance_m2 = 0.0;
+  double wavelength_m = 0.0;
+};
+
+// Combine two single-differenced carrier measurements while retaining a unit
+// geometry coefficient.  The input variances are assumed independent.
+inline RtkLaneCombination rtkLaneCombination(
+    double primary_phase_m, double primary_variance_m2,
+    double primary_frequency_hz, double secondary_phase_m,
+    double secondary_variance_m2, double secondary_frequency_hz,
+    bool wide_lane)
+{
+  const double secondary_sign = wide_lane ? -1.0 : 1.0;
+  const double denominator =
+      primary_frequency_hz + secondary_sign * secondary_frequency_hz;
+  if (!(primary_frequency_hz > 0.0) || !(secondary_frequency_hz > 0.0) ||
+      std::abs(denominator) <= kRtkFrequencyToleranceHz ||
+      !(primary_variance_m2 >= 0.0) || !(secondary_variance_m2 >= 0.0))
+    return {};
+  const double primary_weight = primary_frequency_hz / denominator;
+  const double secondary_weight = secondary_sign * secondary_frequency_hz /
+                                  denominator;
+  return {
+      primary_weight * primary_phase_m +
+          secondary_weight * secondary_phase_m,
+      primary_weight * primary_weight * primary_variance_m2 +
+          secondary_weight * secondary_weight * secondary_variance_m2,
+      LIGHT_SPEED / std::abs(denominator)};
+}
 
 inline bool rtkFrequencyNear(double frequency_hz, double nominal_hz)
 {

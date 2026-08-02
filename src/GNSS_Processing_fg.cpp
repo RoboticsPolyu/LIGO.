@@ -53,7 +53,9 @@ const char *rtkBandName(RtkSignalBand band)
          band == RtkSignalBand::Secondary ? "L2/E5b/B2" :
          band == RtkSignalBand::L5 ? "L5/E5a/B2a" :
          band == RtkSignalBand::Extra ? "E6/B3/G3" :
-         band == RtkSignalBand::Wide ? "E5ab/B2ab" : "unsupported";
+         band == RtkSignalBand::Wide ? "E5ab/B2ab" :
+         band == RtkSignalBand::WideLane ? "wide-lane" :
+         band == RtkSignalBand::NarrowLane ? "narrow-lane" : "unsupported";
 }
 
 const char *rtkSystemName(uint32_t system)
@@ -1171,6 +1173,10 @@ void GNSSProcess::addDoubleDifferenceFactors(
     RtkSignalBand signal_band;
     double wavelength;
     double single_difference_variance_m2;
+    double single_difference_phase_m;
+    double frequency_hz;
+    bool rover_lock_lost;
+    bool base_lock_lost;
   };
 
   std::vector<Candidate> candidates;
@@ -1295,7 +1301,55 @@ void GNSSProcess::addDoubleDifferenceFactors(
       candidates.push_back(
           {index, static_cast<int>(frequency_index), base, sv_pos,
            satsys(observation->sat, nullptr), signal_band, wavelength,
-           single_difference_variance_m2});
+           single_difference_variance_m2,
+           observation->cp[frequency_index] * wavelength -
+               base->carrier_cycles * base_wavelength,
+           normalized_frequency, rtkLossOfLock(rover_lli),
+           rtkLossOfLock(base->loss_of_lock)});
+    }
+  }
+
+  // Supplement the raw-frequency factors with primary/secondary wide-lane
+  // and narrow-lane combinations.  Both combinations retain one geometry
+  // term, so they use the same DD factor with independent ambiguity states.
+  const size_t raw_candidate_count = candidates.size();
+  size_t lane_candidates = 0;
+  for (size_t primary_index = 0; primary_index < raw_candidate_count;
+       ++primary_index)
+  {
+    const Candidate primary = candidates[primary_index];
+    if (primary.signal_band != RtkSignalBand::Primary) continue;
+    for (size_t secondary_index = 0; secondary_index < raw_candidate_count;
+         ++secondary_index)
+    {
+      const Candidate secondary = candidates[secondary_index];
+      if (secondary.rover_index != primary.rover_index ||
+          secondary.signal_band != RtkSignalBand::Secondary)
+        continue;
+      for (const bool wide_lane : {true, false})
+      {
+        const RtkLaneCombination combination = rtkLaneCombination(
+            primary.single_difference_phase_m,
+            primary.single_difference_variance_m2, primary.frequency_hz,
+            secondary.single_difference_phase_m,
+            secondary.single_difference_variance_m2, secondary.frequency_hz,
+            wide_lane);
+        if (!(combination.wavelength_m > 0.0) ||
+            !std::isfinite(combination.phase_m) ||
+            !std::isfinite(combination.variance_m2))
+          continue;
+        candidates.push_back(
+            {primary.rover_index, primary.frequency_index, primary.base,
+             primary.satellite_ecef, primary.system,
+             wide_lane ? RtkSignalBand::WideLane
+                       : RtkSignalBand::NarrowLane,
+             combination.wavelength_m, combination.variance_m2,
+             combination.phase_m, 0.0,
+             primary.rover_lock_lost || secondary.rover_lock_lost,
+             primary.base_lock_lost || secondary.base_lock_lost});
+        ++lane_candidates;
+      }
+      break;
     }
   }
 
@@ -1399,13 +1453,8 @@ void GNSSProcess::addDoubleDifferenceFactors(
 
     const ObsPtr &satellite_obs = observations[satellite.rover_index];
     const ObsPtr &reference_obs = observations[reference.rover_index];
-    const double satellite_phase =
-        satellite_obs->cp[satellite.frequency_index] * satellite.wavelength -
-        satellite.base->carrier_cycles * (LIGHT_SPEED / satellite.base->frequency_hz);
-    const double reference_phase =
-        reference_obs->cp[reference.frequency_index] * reference.wavelength -
-        reference.base->carrier_cycles * (LIGHT_SPEED / reference.base->frequency_hz);
-    const double measured = satellite_phase - reference_phase;
+    const double measured = satellite.single_difference_phase_m -
+                            reference.single_difference_phase_m;
     // DD geometry cancels receiver/satellite clock terms. The ambiguity state
     // absorbs the remaining integer carrier term (and float atmospheric error).
     const double geometry =
@@ -1419,16 +1468,10 @@ void GNSSProcess::addDoubleDifferenceFactors(
         static_cast<uint8_t>(satellite.signal_band));
     auto ambiguity = ambiguities_.find(ambiguity_id);
     const bool ambiguity_existed = ambiguity != ambiguities_.end();
-    const bool satellite_lock_lost =
-        static_cast<size_t>(satellite.frequency_index) < satellite_obs->LLI.size() &&
-        rtkLossOfLock(satellite_obs->LLI[satellite.frequency_index]);
-    const bool reference_lock_lost =
-        static_cast<size_t>(reference.frequency_index) < reference_obs->LLI.size() &&
-        rtkLossOfLock(reference_obs->LLI[reference.frequency_index]);
-    const bool satellite_base_lock_lost =
-        rtkLossOfLock(satellite.base->loss_of_lock);
-    const bool reference_base_lock_lost =
-        rtkLossOfLock(reference.base->loss_of_lock);
+    const bool satellite_lock_lost = satellite.rover_lock_lost;
+    const bool reference_lock_lost = reference.rover_lock_lost;
+    const bool satellite_base_lock_lost = satellite.base_lock_lost;
+    const bool reference_base_lock_lost = reference.base_lock_lost;
     const double arc_gap = ambiguity_existed
         ? timestamp - ambiguity->second.last_timestamp
         : std::numeric_limits<double>::quiet_NaN();
@@ -1617,6 +1660,7 @@ void GNSSProcess::addDoubleDifferenceFactors(
         << " no_base_examples=[" << no_base_detail.str() << ']'
         << " half_cycle_examples=[" << half_cycle_detail.str() << ']'
         << " groups=" << reference_by_group.size()
+        << " lane_candidates=" << lane_candidates
         << " references=[" << references.str() << ']'
         << " factors_added=" << epoch_factors
         << " dd_sigma_m=[min:"

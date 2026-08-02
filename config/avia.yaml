@@ -57,7 +57,8 @@ gnss:
     use_l5: true                       # add GPS L5/Galileo E5a/BeiDou B2a carrier DD factors
     # RINEX 3.02 file, ZIP archive, or directory. This directory contains two
     # consecutive HKSC hourly observation archives.
-    base_station_file: "2026-Aug-02_001813"
+    # base_station_file: "2026-Aug-02_001813"
+    base_station_file: "2026-Aug-02_200510"
     base_epoch_tolerance: 0.05
     # Base RINEX is 1 Hz; keep this independent of 10 Hz rover GNSS period.
     rtk_ambiguity_gap_tolerance: 5
@@ -72,9 +73,9 @@ gnss:
     # This dataset normally has three stable integer-compatible DD arcs after
     # elevation filtering; covariance and ratio gates still protect the fix.
     lambda_min_ambiguities: 3
-    lambda_min_lock_epochs: 10
+    lambda_min_lock_epochs: 5
     lambda_ratio_threshold: 3.0
-    lambda_max_std_cycles: 0.25
+    lambda_max_std_cycles: 0.3
     fixed_ambiguity_sigma_cycles: 0.001
     # Structured [RTK-DD], [RTK-FLOAT], and [RTK-LAMBDA] runtime diagnostics.
     rtk_debug: true
@@ -94,7 +95,7 @@ gnss:
     gnss_dopp_std_thres: 30.0           # doppler std threshold
     gnss_cp_std_thres: 30.0             # carrier phase std threshold
     gnss_cp_time_thres: 100.0           # single-differenced carrier phase factor time threshold
-    gtsam_variable_thres: 2000            # the window size for GNSS obs
+    gtsam_variable_thres: 3000            # the window size for GNSS obs
     gtsam_marg_variable_thres: 1
     gnss_sample_period: 0.1             # = 1 / frequency of GNSS obs
     outlier_thres: 1 # 1                # parameter for robust function of GNSS factors

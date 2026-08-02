@@ -243,7 +243,7 @@ class GNSSProcess
         const std::vector<ObsPtr> &valid_observations,
         const std::vector<EphemBasePtr> &valid_ephemerides,
         const state_output &state);
-    /// Add synchronized primary/secondary/L5 carrier DD factors for one epoch.
+    /// Add raw-frequency and supplementary wide-/narrow-lane carrier DD factors.
     void addDoubleDifferenceFactors(const std::vector<ObsPtr> &observations,
                                     const std::vector<EphemBasePtr> &ephemerides,
                                     const Eigen::Matrix3d &rover_rotation,

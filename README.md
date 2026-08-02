@@ -129,6 +129,11 @@ ambiguity; eligible ambiguities from both bands are resolved jointly by
 LAMBDA. GLONASS remains L1-only because this signal mapping has no GLONASS L5
 equivalent.
 
+When primary and secondary carrier observations are available for the same
+satellite, the graph also receives supplementary wide-lane and narrow-lane DD
+factors. These combinations have separate ambiguity arcs, propagate the noise
+of both source carriers, and are reset when either source carrier loses lock.
+
 Epoch times must use the same GPST seconds as the rover observations in the
 bag. RINEX UTC and BDT headers are converted to GPST. Note that the supplied
 HKSC archives contain observations from 21 March 2025 at 08:00--10:00 GPST;

@@ -225,6 +225,28 @@ TEST(RtkSignalSelection, RejectsL5ForUnsupportedConstellation)
             RtkSignalBand::Unsupported);
 }
 
+TEST(RtkSignalSelection, FormsWideAndNarrowLaneCombinations)
+{
+  const double l1_phase_m = 12.5;
+  const double l2_phase_m = 11.0;
+  const double l1_variance = 0.0004;
+  const double l2_variance = 0.0009;
+  const RtkLaneCombination wide = rtkLaneCombination(
+      l1_phase_m, l1_variance, FREQ1, l2_phase_m, l2_variance, FREQ2, true);
+  const RtkLaneCombination narrow = rtkLaneCombination(
+      l1_phase_m, l1_variance, FREQ1, l2_phase_m, l2_variance, FREQ2, false);
+
+  EXPECT_NEAR(wide.phase_m,
+              (FREQ1 * l1_phase_m - FREQ2 * l2_phase_m) / (FREQ1 - FREQ2),
+              1.0e-12);
+  EXPECT_NEAR(wide.wavelength_m, LIGHT_SPEED / (FREQ1 - FREQ2), 1.0e-12);
+  EXPECT_NEAR(narrow.phase_m,
+              (FREQ1 * l1_phase_m + FREQ2 * l2_phase_m) / (FREQ1 + FREQ2),
+              1.0e-12);
+  EXPECT_NEAR(narrow.wavelength_m, LIGHT_SPEED / (FREQ1 + FREQ2), 1.0e-12);
+  EXPECT_GT(wide.variance_m2, narrow.variance_m2);
+}
+
 TEST(RtkSignalSelection, MapsGalileoAndBeiDouSecondaryBands)
 {
   auto galileo = std::make_shared<gnss_comm::Obs>();
