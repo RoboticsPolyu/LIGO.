@@ -53,9 +53,7 @@ const char *rtkBandName(RtkSignalBand band)
          band == RtkSignalBand::Secondary ? "L2/E5b/B2" :
          band == RtkSignalBand::L5 ? "L5/E5a/B2a" :
          band == RtkSignalBand::Extra ? "E6/B3/G3" :
-         band == RtkSignalBand::Wide ? "E5ab/B2ab" :
-         band == RtkSignalBand::WideLane ? "wide-lane" :
-         band == RtkSignalBand::NarrowLane ? "narrow-lane" : "unsupported";
+         band == RtkSignalBand::Wide ? "E5ab/B2ab" : "unsupported";
 }
 
 const char *rtkSystemName(uint32_t system)
@@ -216,6 +214,7 @@ void GNSSProcess::Reset()
   p_assign->factor_id_frame.clear();
   id_accumulate = 0;
   ambiguities_.clear();
+  fixed_wide_lanes_.clear();
   reference_satellites_.clear();
   raw_satellite_directions_.clear();
   valid_satellite_directions_.clear();
@@ -1309,50 +1308,6 @@ void GNSSProcess::addDoubleDifferenceFactors(
     }
   }
 
-  // Supplement the raw-frequency factors with primary/secondary wide-lane
-  // and narrow-lane combinations.  Both combinations retain one geometry
-  // term, so they use the same DD factor with independent ambiguity states.
-  const size_t raw_candidate_count = candidates.size();
-  size_t lane_candidates = 0;
-  for (size_t primary_index = 0; primary_index < raw_candidate_count;
-       ++primary_index)
-  {
-    const Candidate primary = candidates[primary_index];
-    if (primary.signal_band != RtkSignalBand::Primary) continue;
-    for (size_t secondary_index = 0; secondary_index < raw_candidate_count;
-         ++secondary_index)
-    {
-      const Candidate secondary = candidates[secondary_index];
-      if (secondary.rover_index != primary.rover_index ||
-          secondary.signal_band != RtkSignalBand::Secondary)
-        continue;
-      for (const bool wide_lane : {true, false})
-      {
-        const RtkLaneCombination combination = rtkLaneCombination(
-            primary.single_difference_phase_m,
-            primary.single_difference_variance_m2, primary.frequency_hz,
-            secondary.single_difference_phase_m,
-            secondary.single_difference_variance_m2, secondary.frequency_hz,
-            wide_lane);
-        if (!(combination.wavelength_m > 0.0) ||
-            !std::isfinite(combination.phase_m) ||
-            !std::isfinite(combination.variance_m2))
-          continue;
-        candidates.push_back(
-            {primary.rover_index, primary.frequency_index, primary.base,
-             primary.satellite_ecef, primary.system,
-             wide_lane ? RtkSignalBand::WideLane
-                       : RtkSignalBand::NarrowLane,
-             combination.wavelength_m, combination.variance_m2,
-             combination.phase_m, 0.0,
-             primary.rover_lock_lost || secondary.rover_lock_lost,
-             primary.base_lock_lost || secondary.base_lock_lost});
-        ++lane_candidates;
-      }
-      break;
-    }
-  }
-
   Eigen::Vector3d rover_ecef;
   Eigen::Vector3d antenna_offset;
   if (nolidar)
@@ -1414,6 +1369,63 @@ void GNSSProcess::addDoubleDifferenceFactors(
         previous_reference->second ==
             observations[candidates[index].rover_index]->sat)
       reference_by_group[group] = index;
+  }
+  // Prefer a common primary/secondary reference within each constellation.
+  // This preserves the raw DD measurements while making their integer
+  // difference a valid wide-lane ambiguity. The lowest combined variance is
+  // used unless the previous common reference is still available.
+  struct DualBandCandidate
+  {
+    size_t primary = std::numeric_limits<size_t>::max();
+    size_t secondary = std::numeric_limits<size_t>::max();
+  };
+  std::map<std::pair<uint32_t, uint32_t>, DualBandCandidate> dual_band;
+  for (size_t index = 0; index < candidates.size(); ++index)
+  {
+    const Candidate &candidate = candidates[index];
+    if (candidate.signal_band != RtkSignalBand::Primary &&
+        candidate.signal_band != RtkSignalBand::Secondary)
+      continue;
+    const uint32_t satellite = observations[candidate.rover_index]->sat;
+    DualBandCandidate &entry = dual_band[{candidate.system, satellite}];
+    if (candidate.signal_band == RtkSignalBand::Primary) entry.primary = index;
+    else entry.secondary = index;
+  }
+  std::map<uint32_t, std::pair<size_t, double>> best_common_reference;
+  for (const auto &entry : dual_band)
+  {
+    if (entry.second.primary == std::numeric_limits<size_t>::max() ||
+        entry.second.secondary == std::numeric_limits<size_t>::max())
+      continue;
+    const double variance =
+        candidates[entry.second.primary].single_difference_variance_m2 +
+        candidates[entry.second.secondary].single_difference_variance_m2;
+    auto found = best_common_reference.find(entry.first.first);
+    if (found == best_common_reference.end() || variance < found->second.second)
+      best_common_reference[entry.first.first] = {entry.second.primary, variance};
+  }
+  for (auto &entry : best_common_reference)
+  {
+    const uint32_t system = entry.first;
+    const auto previous_primary = reference_satellites_.find(
+        {system, static_cast<uint8_t>(RtkSignalBand::Primary)});
+    const auto previous_secondary = reference_satellites_.find(
+        {system, static_cast<uint8_t>(RtkSignalBand::Secondary)});
+    if (previous_primary != reference_satellites_.end() &&
+        previous_secondary != reference_satellites_.end() &&
+        previous_primary->second == previous_secondary->second)
+    {
+      const auto previous = dual_band.find({system, previous_primary->second});
+      if (previous != dual_band.end() &&
+          previous->second.primary != std::numeric_limits<size_t>::max() &&
+          previous->second.secondary != std::numeric_limits<size_t>::max())
+        entry.second.first = previous->second.primary;
+    }
+    const uint32_t satellite =
+        observations[candidates[entry.second.first].rover_index]->sat;
+    const DualBandCandidate &indices = dual_band.at({system, satellite});
+    reference_by_group[{system, RtkSignalBand::Primary}] = indices.primary;
+    reference_by_group[{system, RtkSignalBand::Secondary}] = indices.secondary;
   }
   for (const auto &entry : reference_by_group)
   {
@@ -1660,7 +1672,6 @@ void GNSSProcess::addDoubleDifferenceFactors(
         << " no_base_examples=[" << no_base_detail.str() << ']'
         << " half_cycle_examples=[" << half_cycle_detail.str() << ']'
         << " groups=" << reference_by_group.size()
-        << " lane_candidates=" << lane_candidates
         << " references=[" << references.str() << ']'
         << " factors_added=" << epoch_factors
         << " dd_sigma_m=[min:"
@@ -1731,6 +1742,148 @@ bool GNSSProcess::attemptIntegerAmbiguityResolution(double timestamp)
   rtk_float_ambiguity_count = active_float;
   rtk_fixed_ambiguity_count = active_fixed;
 
+  // Stage 1: resolve N_primary-N_secondary from the joint covariance of the
+  // raw ambiguity states. No lane observation is added, so the carrier data
+  // enter the graph exactly once. Only pairs with identical DD reference and
+  // subject satellites have a valid integer difference.
+  struct LanePair
+  {
+    EligibleAmbiguity *primary = nullptr;
+    EligibleAmbiguity *secondary = nullptr;
+  };
+  using SatellitePair = std::pair<uint32_t, uint32_t>;
+  std::map<SatellitePair, LanePair> lane_pairs_by_satellite;
+  for (EligibleAmbiguity &ambiguity : eligible)
+  {
+    const RtkSignalBand band =
+        static_cast<RtkSignalBand>(std::get<2>(ambiguity.id));
+    LanePair &pair = lane_pairs_by_satellite[
+        {std::get<0>(ambiguity.id), std::get<1>(ambiguity.id)}];
+    if (band == RtkSignalBand::Primary) pair.primary = &ambiguity;
+    if (band == RtkSignalBand::Secondary) pair.secondary = &ambiguity;
+  }
+  std::vector<LanePair> lane_pairs;
+  for (const auto &entry : lane_pairs_by_satellite)
+  {
+    const LanePair &pair = entry.second;
+    if (!pair.primary || !pair.secondary) continue;
+    const auto keys = std::make_pair(pair.primary->state->key,
+                                     pair.secondary->state->key);
+    if (fixed_wide_lanes_.count(keys) == 0) lane_pairs.push_back(pair);
+  }
+
+  while (lane_pairs.size() >= 2)
+  {
+    try
+    {
+      gtsam::KeyVector raw_keys;
+      std::vector<std::pair<size_t, size_t>> transform_indices;
+      raw_keys.reserve(2 * lane_pairs.size());
+      transform_indices.reserve(lane_pairs.size());
+      for (const LanePair &pair : lane_pairs)
+      {
+        const size_t primary_index = raw_keys.size();
+        raw_keys.push_back(pair.primary->state->key);
+        const size_t secondary_index = raw_keys.size();
+        raw_keys.push_back(pair.secondary->state->key);
+        transform_indices.push_back({primary_index, secondary_index});
+      }
+      const gtsam::JointMarginal joint =
+          p_assign->isam.jointMarginalCovariance(raw_keys);
+      Eigen::VectorXd raw_float(raw_keys.size());
+      Eigen::MatrixXd raw_covariance(raw_keys.size(), raw_keys.size());
+      for (size_t row = 0; row < raw_keys.size(); ++row)
+      {
+        const LanePair &row_pair = lane_pairs[row / 2];
+        const AmbiguityState *row_state = row % 2 == 0
+            ? row_pair.primary->state : row_pair.secondary->state;
+        raw_float[row] =
+            p_assign->isamCurrentEstimate.at<gtsam::Vector1>(raw_keys[row])[0] /
+            row_state->wavelength;
+        for (size_t column = 0; column < raw_keys.size(); ++column)
+        {
+          const LanePair &column_pair = lane_pairs[column / 2];
+          const AmbiguityState *column_state = column % 2 == 0
+              ? column_pair.primary->state : column_pair.secondary->state;
+          raw_covariance(row, column) =
+              joint.at(raw_keys[row], raw_keys[column])(0, 0) /
+              (row_state->wavelength * column_state->wavelength);
+        }
+      }
+      const Eigen::MatrixXd transform =
+          ligo::wideLaneTransform(raw_keys.size(), transform_indices);
+      const Eigen::VectorXd lane_float = transform * raw_float;
+      const Eigen::MatrixXd lane_covariance =
+          transform * raw_covariance * transform.transpose();
+
+      size_t worst_index = 0;
+      double worst_std = -1.0;
+      for (size_t index = 0; index < lane_pairs.size(); ++index)
+      {
+        const double standard_deviation = lane_covariance(index, index) > 0.0
+            ? std::sqrt(lane_covariance(index, index))
+            : std::numeric_limits<double>::infinity();
+        if (standard_deviation > worst_std)
+        {
+          worst_std = standard_deviation;
+          worst_index = index;
+        }
+      }
+      if (!lane_covariance.allFinite() || worst_std > lambda_max_std_cycles)
+      {
+        lane_pairs.erase(lane_pairs.begin() + worst_index);
+        continue;
+      }
+      const LambdaResult lane_result =
+          LambdaAmbiguityResolver::solve(lane_float, lane_covariance, 2);
+      const double lane_ratio = lane_result.valid &&
+              lane_result.squared_norms.size() >= 2
+          ? lane_result.squared_norms[1] /
+                std::max(lane_result.squared_norms[0], 1.0e-12)
+          : 0.0;
+      if (!lane_result.valid || lane_ratio < lambda_ratio_threshold)
+      {
+        lane_pairs.erase(lane_pairs.begin() + worst_index);
+        continue;
+      }
+
+      const double lane_sigma =
+          std::max(fixed_ambiguity_sigma_cycles, 1.0e-6);
+      const auto lane_noise =
+          gtsam::noiseModel::Isotropic::Sigma(1, lane_sigma);
+      for (size_t index = 0; index < lane_pairs.size(); ++index)
+      {
+        const LanePair &pair = lane_pairs[index];
+        const long long integer = static_cast<long long>(
+            std::llround(lane_result.candidates(index, 0)));
+        p_assign->gtSAMgraph.add(ligo::WideLaneAmbiguityFactor(
+            pair.primary->state->key, pair.secondary->state->key,
+            pair.primary->state->wavelength,
+            pair.secondary->state->wavelength, integer, lane_noise));
+        fixed_wide_lanes_.insert({pair.primary->state->key,
+                                  pair.secondary->state->key});
+      }
+      p_assign->isam.update(p_assign->gtSAMgraph, gtsam::Values());
+      p_assign->gtSAMgraph.resize(0);
+      p_assign->isam.update();
+      p_assign->isamCurrentEstimate = p_assign->isam.calculateEstimate();
+      ROS_INFO_STREAM("[RTK-WL] FIX SUCCESS fixed=" << lane_pairs.size()
+                      << " ratio=" << lane_ratio
+                      << "; continuing with conditional raw/NL resolution");
+      break;
+    }
+    catch (const std::exception &exception)
+    {
+      ROS_WARN_STREAM_THROTTLE(
+          5.0, "[RTK-WL] covariance unavailable; wide-lane stage skipped: "
+                   << exception.what());
+      break;
+    }
+  }
+
+  // Stage 2: after any accepted wide-lane constraints have been committed,
+  // resolve the raw integers using their updated conditional covariance. This
+  // is the narrow-lane stage of the hierarchy.
   const size_t minimum = static_cast<size_t>(std::max(2, lambda_min_ambiguities));
   if (eligible.size() < minimum)
   {

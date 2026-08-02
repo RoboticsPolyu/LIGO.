@@ -1,6 +1,7 @@
 #include "LambdaAmbiguityResolver.h"
 #include "RtkSignalUtils.h"
 #include "gnss_factor/gnss_double_diff_carrier_factor.hpp"
+#include "gnss_factor/gnss_hierarchical_ambiguity_factor.hpp"
 
 #include <gtest/gtest.h>
 #include <gtsam/inference/Symbol.h>
@@ -184,6 +185,43 @@ TEST(DoubleDiffCarrierFactor, EcefFactorHasCorrectResidualAndJacobians)
   expectMatrixNear(H3, vectorJacobian(data.ambiguity, evaluate_ambiguity), 2.0e-5);
 }
 
+TEST(HierarchicalAmbiguityResolution, WideLaneConstraintHasCorrectResidual)
+{
+  const double lambda1 = LIGHT_SPEED / FREQ1;
+  const double lambda2 = LIGHT_SPEED / FREQ2;
+  const auto noise = gtsam::noiseModel::Isotropic::Sigma(1, 0.001);
+  const ligo::WideLaneAmbiguityFactor factor(
+      gtsam::Symbol('n', 1), gtsam::Symbol('n', 2),
+      lambda1, lambda2, 7, noise);
+  const gtsam::Vector1 primary(18.25 * lambda1);
+  const gtsam::Vector1 secondary(11.25 * lambda2);
+  gtsam::Matrix H1, H2;
+
+  EXPECT_NEAR(factor.evaluateError(primary, secondary, &H1, &H2)[0], 0.0,
+              1.0e-12);
+  EXPECT_NEAR(H1(0, 0), 1.0 / lambda1, 1.0e-12);
+  EXPECT_NEAR(H2(0, 0), -1.0 / lambda2, 1.0e-12);
+}
+
+TEST(HierarchicalAmbiguityResolution, PropagatesFullWideLaneCovariance)
+{
+  Eigen::Matrix4d raw_covariance;
+  raw_covariance <<
+      0.04, 0.01, 0.006, 0.002,
+      0.01, 0.09, 0.003, 0.008,
+      0.006, 0.003, 0.05, 0.015,
+      0.002, 0.008, 0.015, 0.08;
+  const Eigen::MatrixXd transform =
+      ligo::wideLaneTransform(4, {{0, 1}, {2, 3}});
+  const Eigen::MatrixXd lane_covariance =
+      transform * raw_covariance * transform.transpose();
+
+  EXPECT_DOUBLE_EQ(lane_covariance(0, 0), 0.04 + 0.09 - 2.0 * 0.01);
+  EXPECT_DOUBLE_EQ(lane_covariance(1, 1), 0.05 + 0.08 - 2.0 * 0.015);
+  EXPECT_DOUBLE_EQ(lane_covariance(0, 1), 0.006 - 0.002 - 0.003 + 0.008);
+  EXPECT_DOUBLE_EQ(lane_covariance(1, 0), lane_covariance(0, 1));
+}
+
 TEST(RtkSignalSelection, DistinguishesAndMatchesAllEnabledBands)
 {
   auto observation = std::make_shared<gnss_comm::Obs>();
@@ -223,28 +261,6 @@ TEST(RtkSignalSelection, RejectsL5ForUnsupportedConstellation)
   observation->freqs = {FREQ1_GLO, FREQ5};
   EXPECT_EQ(classifyRtkSignal(observation, FREQ5, true, true),
             RtkSignalBand::Unsupported);
-}
-
-TEST(RtkSignalSelection, FormsWideAndNarrowLaneCombinations)
-{
-  const double l1_phase_m = 12.5;
-  const double l2_phase_m = 11.0;
-  const double l1_variance = 0.0004;
-  const double l2_variance = 0.0009;
-  const RtkLaneCombination wide = rtkLaneCombination(
-      l1_phase_m, l1_variance, FREQ1, l2_phase_m, l2_variance, FREQ2, true);
-  const RtkLaneCombination narrow = rtkLaneCombination(
-      l1_phase_m, l1_variance, FREQ1, l2_phase_m, l2_variance, FREQ2, false);
-
-  EXPECT_NEAR(wide.phase_m,
-              (FREQ1 * l1_phase_m - FREQ2 * l2_phase_m) / (FREQ1 - FREQ2),
-              1.0e-12);
-  EXPECT_NEAR(wide.wavelength_m, LIGHT_SPEED / (FREQ1 - FREQ2), 1.0e-12);
-  EXPECT_NEAR(narrow.phase_m,
-              (FREQ1 * l1_phase_m + FREQ2 * l2_phase_m) / (FREQ1 + FREQ2),
-              1.0e-12);
-  EXPECT_NEAR(narrow.wavelength_m, LIGHT_SPEED / (FREQ1 + FREQ2), 1.0e-12);
-  EXPECT_GT(wide.variance_m2, narrow.variance_m2);
 }
 
 TEST(RtkSignalSelection, MapsGalileoAndBeiDouSecondaryBands)

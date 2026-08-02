@@ -39,8 +39,10 @@
 #include "GNSS_Assignment.h"
 #include "BaseStationData.h"
 
+#include <set>
 #include <string>
 #include <tuple>
+#include <utility>
 
 #include <pcl/registration/icp.h>
 using namespace gnss_comm;
@@ -269,6 +271,8 @@ class GNSSProcess
     // (reference satellite, subject satellite, RtkSignalBand value).
     using AmbiguityId = std::tuple<uint32_t, uint32_t, uint8_t>;
     std::map<AmbiguityId, AmbiguityState> ambiguities_;
+    // Raw ambiguity-key pairs whose integer wide-lane difference is held.
+    std::set<std::pair<gtsam::Key, gtsam::Key>> fixed_wide_lanes_;
     // Keep one reference satellite per constellation/band until it disappears.
     std::map<std::pair<uint32_t, uint8_t>, uint32_t> reference_satellites_;
     size_t next_ambiguity_id_ = 0;
