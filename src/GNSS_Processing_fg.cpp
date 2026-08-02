@@ -1428,7 +1428,8 @@ void GNSSProcess::addDoubleDifferenceFactors(
   // without adding an ambiguity variable. Reuse the primary carrier reference
   // so the code and carrier DD residuals have identical geometry.
   size_t epoch_pseudorange_factors = 0;
-  if (std::isfinite(double_difference_pseudorange_sigma) &&
+  if (use_dd_pseudorange &&
+      std::isfinite(double_difference_pseudorange_sigma) &&
       double_difference_pseudorange_sigma > 0.0)
   {
     const auto pseudorange_noise = gtsam::noiseModel::Isotropic::Sigma(
@@ -1485,6 +1486,7 @@ void GNSSProcess::addDoubleDifferenceFactors(
 
   const auto ambiguity_prior_noise =
       gtsam::noiseModel::Isotropic::Sigma(1, ambiguity_prior_sigma);
+  if (use_dd_carrier)
   for (size_t index = 0; index < candidates.size(); ++index)
   {
     const Candidate &satellite = candidates[index];

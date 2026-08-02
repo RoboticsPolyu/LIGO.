@@ -182,6 +182,8 @@ class GNSSProcess
   // Base/rover RTK controls. The legacy pseudorange/Doppler path remains on
   // the primary signal; use_secondary/use_l5 apply to the DD carrier path.
   bool use_double_differences = false;
+  bool use_dd_pseudorange = true;
+  bool use_dd_carrier = true;
   bool use_secondary = true;
   bool use_l5 = true;
   double base_epoch_tolerance = 0.05;

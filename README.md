@@ -137,6 +137,9 @@ of both source carriers, and are reset when either source carrier loses lock.
 Synchronized primary-band code observations also add double-differenced
 pseudorange factors. Their standard deviation in metres is configured with
 `gnss/double_difference_pseudorange_sigma` (default: `2.0`).
+The master switch `gnss/use_double_differences` controls the complete RTK DD
+path. Within it, `gnss/use_dd_pseudorange` and `gnss/use_dd_carrier`
+independently enable code and carrier factors; both default to `true`.
 
 Epoch times must use the same GPST seconds as the rover observations in the
 bag. RINEX UTC and BDT headers are converted to GPST. Note that the supplied

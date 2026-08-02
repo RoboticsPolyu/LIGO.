@@ -198,6 +198,8 @@ void readParameters(ros::NodeHandle &nh)
         nh.param<double>("gnss/psr_dopp_weight",p_gnss->relative_sqrt_info, 10);
         nh.param<double>("gnss/cp_weight",p_gnss->cp_weight, 0.1);
         nh.param<bool>("gnss/use_double_differences", p_gnss->use_double_differences, false);
+        nh.param<bool>("gnss/use_dd_pseudorange", p_gnss->use_dd_pseudorange, true);
+        nh.param<bool>("gnss/use_dd_carrier", p_gnss->use_dd_carrier, true);
         nh.param<bool>("gnss/use_secondary", p_gnss->use_secondary, true);
         nh.param<bool>("gnss/use_l5", p_gnss->use_l5, true);
         nh.param<double>("gnss/base_epoch_tolerance", p_gnss->base_epoch_tolerance, 0.05);
