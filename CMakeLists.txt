@@ -108,7 +108,8 @@ catkin_package(
   INCLUDE_DIRS
 )
 
-add_executable(ligo_mapping src/laserMapping.cpp 
+add_executable(ligo_mapping src/laserMapping.cpp src/LaserMappingVisualization.cpp
+                src/LaserMappingRosInterface.cpp
                 include/Urbannav_process/handler.cpp
                 src/li_initialization.cpp src/parameters.cpp src/preprocess.cpp src/Estimator.cpp 
                 src/IMU_Processing.cpp src/GNSS_Processing_fg.cpp src/BaseStationData.cpp src/LambdaAmbiguityResolver.cpp src/GNSS_Initialization.cpp src/GNSS_Assignment.cpp
@@ -154,5 +155,14 @@ if(CATKIN_ENABLE_TESTING)
   if(TARGET test_rtk_core)
     target_include_directories(test_rtk_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_link_libraries(test_rtk_core ${catkin_LIBRARIES} gtsam)
+  endif()
+  catkin_add_gtest(test_laser_mapping_visualization
+                   test/test_laser_mapping_visualization.cpp
+                   src/LaserMappingVisualization.cpp)
+  if(TARGET test_laser_mapping_visualization)
+    target_include_directories(test_laser_mapping_visualization PRIVATE
+                               ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(test_laser_mapping_visualization
+                          ${catkin_LIBRARIES} gtsam)
   endif()
 endif()

@@ -207,8 +207,7 @@ void h_model_output(state_output &s, Eigen::Matrix3d cov_p, Eigen::Matrix3d cov_
 		}
 	}
 	effct_feat_num += effect_num_k;
-	if (GNSS_ENABLE) p_gnss->norm_vec_num += effect_num_k;
-	if (NMEA_ENABLE) p_nmea->norm_vec_num += effect_num_k;
+	p_gnss->norm_vec_num += effect_num_k;
 }
 
 void h_model_IMU_output(state_output &s, esekfom::dyn_share_modified<double> &ekfom_data)

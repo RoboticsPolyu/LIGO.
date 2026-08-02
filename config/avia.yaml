@@ -41,19 +41,18 @@ gnss:
     # Full mapping mode. Keep this explicit so a previous GNSS/IMU-only
     # roslaunch cannot leave a stale private parameter in a reused ROS master.
     nolidar: false
-    gnss_enable: true                  # enable fuse GNSS
     ephem_from_rinex: false            # true: read ephem from rinex. false: get ephem from rosbag
     ephem_file_name: " "
     obs_from_rinex: false              # true: read gnss obs (e.g., pseudo range, doppler, carrier-phase) from rinex. false: get obs from rosbag
     pvt_is_gt: true            # true: the rtk (ground truth) is solved online and saved in /ublox_driver/receiver_pvt topic. false: read rtk from local file  
     gt_file_name: " "
-    gt_file_type: 1                    # 1: livox, 2: urban, 3: m2dgr
+    gt_file_type: 1                      # 1: livox, 2: urban, 3: m2dgr
     outlier_rejection: true            # true: use robust function for gnss factors
     psr_dopp_weight: 1 # 10
     cp_weight: 10 
     # Float RTK: base epochs must use the same GPST seconds as rover observations.
     use_double_differences: true
-    use_dd_pseudorange: true            # add primary-band code DD factors
+    use_dd_pseudorange: false      # add primary-band code DD factors
     use_dd_carrier: true                # add carrier DD factors and ambiguities
     use_secondary: true                # GPS L2, Galileo E5b, BeiDou B2
     use_l5: true                       # add GPS L5/Galileo E5a/BeiDou B2a carrier DD factors

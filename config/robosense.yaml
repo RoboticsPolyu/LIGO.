@@ -38,7 +38,6 @@ mapping:
                   1, 0, 0 ] # extrinsics of LiDAR to IMU represented in IMU frame
 
 gnss:
-    gnss_enable: true # enable fuse GNSS
     ephem_from_rinex: false # true: read ephem from rinex. false: get ephem from rosbag
     ephem_file_name: "BRDM00DLR_S_20221870000_01D_MN.rnx"
     obs_from_rinex: false # true: read gnss obs (e.g., pseudo range, doppler, carrier-phase) from rinex. false: get obs from rosbag

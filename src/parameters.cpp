@@ -95,8 +95,7 @@ bool gnss_local_online_sync = true, nolidar = false;
 double li_init_gyr_cov = 0.1, li_init_acc_cov = 0.1, lidar_time_inte = 0.1, first_imu_time = 0.0;
 int orig_odom_freq = 10;
 double online_refine_time = 20.0; //unit: s
-bool GNSS_ENABLE = true;
-bool NMEA_ENABLE = true;
+
 bool dyn_filter = false;
 double dyn_filter_resolution = 1.0;
 Eigen::Matrix3d Rot_gnss_init(Eye3d);
@@ -191,10 +190,7 @@ void readParameters(ros::NodeHandle &nh)
     ivox_options_.nearby_type_ = IVoxType::NearbyType::NEARBY18;
   }
     p_imu->gravity_ << VEC_FROM_ARRAY(gravity);
-    nh.param<bool>("gnss/gnss_enable", GNSS_ENABLE, false);
-    cout << "gnss enable:" << GNSS_ENABLE << endl;
-    if (GNSS_ENABLE)
-    {
+    // GNSS fusion is mandatory; load its parameters unconditionally.
         nh.param<double>("gnss/psr_dopp_weight",p_gnss->relative_sqrt_info, 10);
         nh.param<double>("gnss/cp_weight",p_gnss->cp_weight, 0.1);
         nh.param<bool>("gnss/use_double_differences", p_gnss->use_double_differences, false);
@@ -284,41 +280,6 @@ void readParameters(ros::NodeHandle &nh)
         nh.param<bool>("gnss/pvt_is_gt",p_gnss->p_assign->pvt_is_gt, false);
         nh.param<int>("gnss/window_size",p_gnss->wind_size, 2);
         p_gnss->p_assign->initNoises();
-    }
-    else
-    {
-        nh.param<string>("gnss/rtk_pvt_topic",rtk_pvt_topic,"/ublox_driver/receiver_pvt");
-    }
-    nh.param<bool>("nmea/nmea_enable", NMEA_ENABLE, false);
-    cout << "nmea enable:" << NMEA_ENABLE << endl;
-    if (NMEA_ENABLE)
-    {
-        nh.param<bool>("gnss/outlier_rejection", p_nmea->p_assign->outlier_rej, false);
-        nh.param<double>("nmea/nmea_weight",p_nmea->nmea_weight, 0.1);
-        nh.param<string>("nmea/posit_odo_topic",nmea_meas_topic,"/mavros/local_position/odom");
-        p_nmea->gravity_init << VEC_FROM_ARRAY(gravity);
-        nh.param<double>("nmea/nmea_local_time_diff",time_diff_nmea_local, 0.0);
-        nh.param<double>("gnss/prior_noise",p_nmea->p_assign->prior_noise, 0.010);
-        nh.param<double>("gnss/marg_noise",p_nmea->p_assign->marg_noise, 0.010);
-        nh.param<double>("gnss/b_acc_noise",p_nmea->pre_integration->acc_w, 0.10);
-        nh.param<double>("gnss/b_omg_noise",p_nmea->pre_integration->gyr_w, 0.10);
-        nh.param<double>("gnss/acc_noise",p_nmea->pre_integration->acc_n, 0.10);
-        nh.param<double>("gnss/omg_noise",p_nmea->pre_integration->gyr_n, 0.10);
-        nh.param<double>("nmea/rot_noise",p_nmea->p_assign->rot_noise,1.0);
-        nh.param<double>("nmea/vel_noise",p_nmea->p_assign->vel_noise,1.0);
-        nh.param<double>("gnss/odo_noise",p_nmea->p_assign->odo_noise,0.1);
-        nh.param<double>("gnss/grav_noise",p_nmea->p_assign->grav_noise,0.1);
-        nh.param<double>("nmea/pos_noise",p_nmea->p_assign->pos_noise,0.1);
-        nh.param<int>("gnss/gtsam_variable_thres",p_nmea->delete_thred, 200);
-        nh.param<int>("gnss/gtsam_marg_variable_thres",p_nmea->p_assign->marg_thred, 1);
-        nh.param<double>("gnss/outlier_thres",p_nmea->p_assign->outlier_thres, 0.1);
-        nh.param<double>("gnss/outlier_thres_init",p_nmea->p_assign->outlier_thres_init, 0.1);
-        nh.param<double>("gnss/gnss_sample_period",p_nmea->nmea_sample_period, 0.1);
-        nh.param<double>("nmea/ppp_std_thres",p_nmea->p_assign->ppp_std_threshold, 20.0);
-        nh.param<bool>("gnss/nolidar",nolidar, false);
-        nh.param<int>("gnss/window_size",p_nmea->wind_size, 2);
-        p_nmea->p_assign->initNoises();
-    }
 }
 
 Eigen::Matrix<double, 3, 1> SO3ToEuler(const SO3 &rot) 
@@ -345,9 +306,7 @@ Eigen::Matrix<double, 3, 1> SO3ToEuler(const SO3 &rot)
 void open_file()
 {
     fout_out.open(DEBUG_FILE_DIR("mat_out.txt"),ios::out);
-    if (GNSS_ENABLE)
-    {
-        fout_rtk.open(DEBUG_FILE_DIR("pos_rtk.txt"),ios::out);
+    fout_rtk.open(DEBUG_FILE_DIR("pos_rtk.txt"),ios::out);
         fout_rtk.setf(ios::fixed, ios::floatfield);
         fout_rtk.precision(6);
         fout_global.open(DEBUG_FILE_DIR("pos_est.txt"),ios::out);
@@ -355,8 +314,7 @@ void open_file()
         fout_global.precision(6);
         fout_ppp.open(DEBUG_FILE_DIR("pos_ppp.txt"),ios::out);
         fout_ppp.setf(ios::fixed, ios::floatfield);
-        fout_ppp.precision(6);
-    }
+    fout_ppp.precision(6);
     if (fout_out)
         cout << "~~~~"<<ROOT_DIR<<" file opened" << endl;
     else

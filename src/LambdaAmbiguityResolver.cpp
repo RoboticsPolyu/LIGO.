@@ -7,7 +7,6 @@
 #include <cmath>
 #include <limits>
 #include <numeric>
-
 namespace
 {
 // Deterministic nearest-integer convention used by both reduction and search.

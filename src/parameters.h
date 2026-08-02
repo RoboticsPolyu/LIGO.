@@ -123,8 +123,7 @@ extern bool gnss_local_online_sync, nolidar;
 extern double li_init_gyr_cov, li_init_acc_cov, lidar_time_inte, first_imu_time;
 extern int orig_odom_freq;
 extern double online_refine_time; //unit: s
-extern bool GNSS_ENABLE;
-extern bool NMEA_ENABLE;
+
 extern double time_update_last, time_current, time_predict_last_const, t_last;
 extern Eigen::Matrix3d Rot_gnss_init;
 

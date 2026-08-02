@@ -340,7 +340,7 @@ bool sync_packages(MeasureGroup &meas, queue<std::vector<ObsPtr>> &gnss_msg, que
 {
     if (nolidar)
     {
-        if (is_first_gnss && !NMEA_ENABLE)
+        if (is_first_gnss)
         {
             if (gnss_meas_buf.empty())
             {
@@ -374,24 +374,6 @@ bool sync_packages(MeasureGroup &meas, queue<std::vector<ObsPtr>> &gnss_msg, que
             }
         }
 
-        if (is_first_nmea && NMEA_ENABLE)
-        {
-            if (nmea_meas_buf.empty())
-            {
-                return false;
-            }
-            else
-            {
-                while (!imu_deque.empty())
-                {
-                    imu_deque.pop_front();
-                }
-                {
-                    is_first_nmea = false;
-                }
-            }
-        }
-
 
         if (imu_deque.empty())
         {
@@ -400,12 +382,7 @@ bool sync_packages(MeasureGroup &meas, queue<std::vector<ObsPtr>> &gnss_msg, que
         
         imu_first_time = imu_deque.front()->header.stamp.toSec(); // 
 
-        if ((latest_gnss_time < time_diff_gnss_local + imu_first_time + lidar_time_inte) && GNSS_ENABLE)
-        {
-            return false;
-        }
-
-        if ((last_nmea_time < time_diff_nmea_local + imu_first_time + lidar_time_inte) && NMEA_ENABLE)
+        if (latest_gnss_time < time_diff_gnss_local + imu_first_time + lidar_time_inte)
         {
             return false;
         }
@@ -477,7 +454,6 @@ bool sync_packages(MeasureGroup &meas, queue<std::vector<ObsPtr>> &gnss_msg, que
             imu_pushed = true;
         }
 
-        if (GNSS_ENABLE)
         {
             if (!gnss_meas_buf.empty()) // or can wait for a short time?
             {
@@ -516,26 +492,7 @@ bool sync_packages(MeasureGroup &meas, queue<std::vector<ObsPtr>> &gnss_msg, que
             //     }
             // }
         }
-        if (NMEA_ENABLE)
-        {
-            if (!nmea_meas_buf.empty()) // or can wait for a short time?
-            {
-                double front_nmea_ts = nmea_meas_buf.front()->header.stamp.toSec(); // take time
-                while (front_nmea_ts - imu_first_time < time_diff_nmea_local + lidar_time_inte) 
-                {
-                    nmea_msg.push(nmea_meas_buf.front());
-                    nmea_meas_buf.pop();
-                    if (nmea_meas_buf.empty()) break;
-                    front_nmea_ts = nmea_meas_buf.front()->header.stamp.toSec();
-                }
 
-                if (!nmea_msg.empty())
-                {
-                    imu_pushed = false;
-                    return true;
-                }
-            }
-        }        
         imu_pushed = false;
         return true;
     }
@@ -543,7 +500,7 @@ bool sync_packages(MeasureGroup &meas, queue<std::vector<ObsPtr>> &gnss_msg, que
     {
     if (!imu_en)
     {
-        if (is_first_gnss && GNSS_ENABLE)
+        if (is_first_gnss)
         {
             if (gnss_meas_buf.empty())
             {
@@ -586,7 +543,6 @@ bool sync_packages(MeasureGroup &meas, queue<std::vector<ObsPtr>> &gnss_msg, que
                 lidar_pushed = true;
             }
             
-            if (GNSS_ENABLE)
             {
                 if (!gnss_meas_buf.empty()) // or can wait for a short time?
                 {
@@ -630,37 +586,7 @@ bool sync_packages(MeasureGroup &meas, queue<std::vector<ObsPtr>> &gnss_msg, que
                 //     }
                 // }
             }
-            if (NMEA_ENABLE)
-            {
-                if (!nmea_meas_buf.empty()) // or can wait for a short time?
-                {
-                    double front_nmea_ts = nmea_meas_buf.front()->header.stamp.toSec();
-                    while (front_nmea_ts < meas.lidar_beg_time + time_diff_nmea_local) // 0.05
-                    {
-                        ROS_WARN("throw nmea, only should happen at the beginning 542");
-                        nmea_meas_buf.pop();
-                        if (nmea_meas_buf.empty()) break;
-                        front_nmea_ts = nmea_meas_buf.front()->header.stamp.toSec();
-                    }
-                    if (!nmea_meas_buf.empty())
-                    {
-                    while ((!lose_lid && (front_nmea_ts <= lidar_end_time + time_diff_nmea_local)) || (lose_lid && (front_nmea_ts <= meas.lidar_beg_time + time_diff_nmea_local + lidar_time_inte) ))
-                    {
-                        nmea_msg.push(nmea_meas_buf.front());
-                        nmea_meas_buf.pop();
-                        if (nmea_meas_buf.empty()) break;
-                        front_nmea_ts = nmea_meas_buf.front()->header.stamp.toSec();
-                    }
-                    if (!nmea_msg.empty())
-                    {
-                        time_buffer.pop_front();
-                        lidar_buffer.pop_front();
-                        lidar_pushed = false;
-                        return true;
-                    }
-                    }
-                }
-            }
+
             time_buffer.pop_front();
             lidar_buffer.pop_front();
             lidar_pushed = false;
@@ -676,7 +602,7 @@ bool sync_packages(MeasureGroup &meas, queue<std::vector<ObsPtr>> &gnss_msg, que
         return false;
     }
 
-    if (0) // (is_first_gnss && GNSS_ENABLE)
+    if (0) // legacy disabled branch
     {
         if (gnss_meas_buf.empty())
         {
@@ -759,7 +685,6 @@ bool sync_packages(MeasureGroup &meas, queue<std::vector<ObsPtr>> &gnss_msg, que
                 imu_time = imu_deque.front()->header.stamp.toSec(); // can be changed
                 imu_next = *(imu_deque.front());
             }
-            if (GNSS_ENABLE)
             {
                 if (!gnss_meas_buf.empty())
                 {
@@ -769,19 +694,6 @@ bool sync_packages(MeasureGroup &meas, queue<std::vector<ObsPtr>> &gnss_msg, que
                         gnss_meas_buf.pop();
                         if(gnss_meas_buf.empty()) break;
                         front_gnss_ts = time2sec(gnss_meas_buf.front()[0]->time); // take time
-                    }
-                }
-            }
-            if (NMEA_ENABLE)
-            {
-                if (!nmea_meas_buf.empty())
-                {
-                    double front_nmea_ts = nmea_meas_buf.front()->header.stamp.toSec(); 
-                    while (front_nmea_ts < lidar_end_time + time_diff_nmea_local)
-                    {
-                        nmea_meas_buf.pop();
-                        if(nmea_meas_buf.empty()) break;
-                        front_nmea_ts = nmea_meas_buf.front()->header.stamp.toSec(); // take time
                     }
                 }
             }
@@ -808,7 +720,6 @@ bool sync_packages(MeasureGroup &meas, queue<std::vector<ObsPtr>> &gnss_msg, que
                 imu_next = *(imu_deque.front());
             }
 
-            if (GNSS_ENABLE)
             {
                 if (!gnss_meas_buf.empty())
                 {
@@ -821,26 +732,11 @@ bool sync_packages(MeasureGroup &meas, queue<std::vector<ObsPtr>> &gnss_msg, que
                     }
                 }
             }
-
-            if (NMEA_ENABLE)
-            {
-                if (!nmea_meas_buf.empty())
-                {
-                    double front_nmea_ts = nmea_meas_buf.front()->header.stamp.toSec(); // take time
-                    while (front_nmea_ts < meas.lidar_beg_time + lidar_time_inte + time_diff_nmea_local)
-                    {
-                        nmea_meas_buf.pop();
-                        if(nmea_meas_buf.empty()) break;
-                        front_nmea_ts = nmea_meas_buf.front()->header.stamp.toSec(); // take time
-                    }
-                }
-            }
         }
 
         imu_pushed = true;
     }
 
-    if (GNSS_ENABLE)
     {
         if (!gnss_meas_buf.empty()) // or can wait for a short time?
         {
@@ -862,28 +758,6 @@ bool sync_packages(MeasureGroup &meas, queue<std::vector<ObsPtr>> &gnss_msg, que
             }
         }
     }
-    if (NMEA_ENABLE)
-    {
-        if (!nmea_meas_buf.empty()) // or can wait for a short time?
-        {
-            double front_nmea_ts = nmea_meas_buf.front()->header.stamp.toSec(); // take time
-            while ((!lose_lid && (front_nmea_ts < lidar_end_time + time_diff_nmea_local)) || (lose_lid && (front_nmea_ts < meas.lidar_beg_time + time_diff_nmea_local + lidar_time_inte) )) 
-            {
-                nmea_msg.push(nmea_meas_buf.front());
-                nmea_meas_buf.pop();
-                if (nmea_meas_buf.empty()) break;
-                front_nmea_ts = nmea_meas_buf.front()->header.stamp.toSec();
-            }
-            if (!nmea_msg.empty())
-            {
-                time_buffer.pop_front();
-                lidar_buffer.pop_front();
-                lidar_pushed = false;
-                imu_pushed = false;
-                return true;
-            }
-        }
-    }
 
     lidar_buffer.pop_front();
     time_buffer.pop_front();
@@ -892,4 +766,3 @@ bool sync_packages(MeasureGroup &meas, queue<std::vector<ObsPtr>> &gnss_msg, que
     return true;
     }
 }
-
