@@ -61,7 +61,7 @@ class NMEAFactorNolidar : public gtsam::NoiseModelFactor2<gtsam::Rot3, gtsam::Ve
         virtual ~NMEAFactorNolidar() {}
 
         gtsam::Vector evaluateError(const gtsam::Rot3 &rot, const gtsam::Vector12 &pos_vel,
-            boost::optional<gtsam::Matrix&> H1 = boost::none, boost::optional<gtsam::Matrix&> H2 = boost::none) const
+            gtsam::OptionalMatrixType H1, gtsam::OptionalMatrixType H2) const
         {
             Eigen::Vector3d P_enu = pos_vel.segment<3>(0) + rot.matrix() * Tex_imu_r;
             

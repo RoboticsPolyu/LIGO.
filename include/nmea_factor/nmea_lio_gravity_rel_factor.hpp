@@ -58,9 +58,9 @@ class NmeaLioGravRelFactor : public gtsam::NoiseModelFactor5<gtsam::Rot3, gtsam:
         virtual ~NmeaLioGravRelFactor() {}
 
         gtsam::Vector evaluateError(const gtsam::Rot3 &rot_ext, const gtsam::Rot3 &rot1, const gtsam::Vector6 &pos_vel1, const gtsam::Vector12 &others_, const gtsam::Vector3 &grav_,
-        boost::optional<gtsam::Matrix&> H1 = boost::none, boost::optional<gtsam::Matrix&> H2 = boost::none,
-        boost::optional<gtsam::Matrix&> H3 = boost::none, boost::optional<gtsam::Matrix&> H4 = boost::none,
-        boost::optional<gtsam::Matrix&> H5 = boost::none) const
+        gtsam::OptionalMatrixType H1, gtsam::OptionalMatrixType H2,
+        gtsam::OptionalMatrixType H3, gtsam::OptionalMatrixType H4,
+        gtsam::OptionalMatrixType H5) const
         {
             // Eigen::Matrix3d d = rot1.transpose() * rot2.matrix();
             // Eigen::Vector3d delta_p = pos_vel2.segment<3>(0) - pos_vel1.segment<3>(0); // - pos_vel_bias1.segment<3>(3) * dt - 0.5 * grav * dt * dt);

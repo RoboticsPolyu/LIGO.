@@ -37,6 +37,10 @@
 #ifndef GNSS_CP_FACTOR_NOLIDAR_POS_H_
 #define GNSS_CP_FACTOR_NOLIDAR_POS_H_
 
+#include <gtsam/nonlinear/NonlinearFactor.h>
+#include <gtsam/base/Matrix.h>
+#include <gtsam/base/Vector.h>
+
 #include <vector>
 #include <Eigen/Dense>
 #include <gtsam/nonlinear/Marginals.h>
@@ -65,7 +69,7 @@ class GnssCpFactorNolidarPos : public gtsam::NoiseModelFactor2<gtsam::Vector12, 
         virtual ~GnssCpFactorNolidarPos() {}
         
         gtsam::Vector evaluateError(const gtsam::Vector12 &pos1, const gtsam::Vector12 &pos2, 
-            boost::optional<gtsam::Matrix&> H1 = boost::none, boost::optional<gtsam::Matrix&> H2 = boost::none) const
+            gtsam::OptionalMatrixType H1, gtsam::OptionalMatrixType H2) const
         {
             const Eigen::Vector3d local_pos1 = rot1 * Tex_imu_r + pos1.segment<3>(0);
             const Eigen::Vector3d local_pos2 = rot2 * Tex_imu_r + pos2.segment<3>(0);

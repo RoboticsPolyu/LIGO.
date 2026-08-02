@@ -108,8 +108,8 @@ class GnssPsrDoppFactor : public gtsam::NoiseModelFactor6<gtsam::Rot3, gtsam::Ve
         }
 
         gtsam::Vector evaluateError(const gtsam::Rot3 &rot, const gtsam::Vector6 &pos_vel_bias, const gtsam::Vector4 &dt, const gtsam::Vector1 &ddt, const gtsam::Vector3 &ext_p, const gtsam::Rot3 &ext_R, //const gtsam::Vector3 &anc, 
-            boost::optional<gtsam::Matrix&> H1 = boost::none, boost::optional<gtsam::Matrix&> H2 = boost::none, boost::optional<gtsam::Matrix&> H3 = boost::none, boost::optional<gtsam::Matrix&> H4 = boost::none, 
-            boost::optional<gtsam::Matrix&> H5 = boost::none, boost::optional<gtsam::Matrix&> H6 = boost::none) const //, boost::optional<gtsam::Matrix&> H7 = boost::none) const
+            gtsam::OptionalMatrixType H1, gtsam::OptionalMatrixType H2, gtsam::OptionalMatrixType H3, gtsam::OptionalMatrixType H4, 
+            gtsam::OptionalMatrixType H5, gtsam::OptionalMatrixType H6) const //, gtsam::OptionalMatrixType H7) const
         {
             Eigen::Vector3d ref_ecef = ext_p;
 
@@ -154,7 +154,7 @@ class GnssPsrDoppFactor : public gtsam::NoiseModelFactor6<gtsam::Rot3, gtsam::Ve
             Eigen::Matrix3d hat_T, hat_hat_omg_T;
             hat_T << SKEW_SYM_MATRX(Tex_imu_r);
             hat_hat_omg_T << SKEW_SYM_MATRX(hat_omg_T);
-            gtsam::Vector2 residual;
+            gtsam::Vector residual(2);
             
             {    
                 residual[0] = (psr_estimated - psr_measured) * pr_weight;

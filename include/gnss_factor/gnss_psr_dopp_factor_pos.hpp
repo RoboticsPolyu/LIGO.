@@ -108,8 +108,8 @@ class GnssPsrDoppFactorPos : public gtsam::NoiseModelFactor5<gtsam::Vector6, gts
         }
 
         gtsam::Vector evaluateError(const gtsam::Vector6 &pos_vel_bias, const gtsam::Vector4 &dt, const gtsam::Vector1 &ddt, const gtsam::Vector3 &ext_p, const gtsam::Rot3 &ext_R, //const gtsam::Vector3 &anc, 
-            boost::optional<gtsam::Matrix&> H1 = boost::none, boost::optional<gtsam::Matrix&> H2 = boost::none, boost::optional<gtsam::Matrix&> H3 = boost::none, 
-            boost::optional<gtsam::Matrix&> H4 = boost::none, boost::optional<gtsam::Matrix&> H5 = boost::none) const //, boost::optional<gtsam::Matrix&> H7 = boost::none) const
+            gtsam::OptionalMatrixType H1, gtsam::OptionalMatrixType H2, gtsam::OptionalMatrixType H3, 
+            gtsam::OptionalMatrixType H4, gtsam::OptionalMatrixType H5) const //, gtsam::OptionalMatrixType H7) const
         {
             Eigen::Vector3d ref_ecef = ext_p;
 
@@ -151,7 +151,7 @@ class GnssPsrDoppFactorPos : public gtsam::NoiseModelFactor5<gtsam::Vector6, gts
                     sv_pos(0)*V_ecef(1) - sv_vel(1)*P_ecef(0) - sv_pos(1)*V_ecef(0));
             double dopp_estimated = (sv_vel - V_ecef).dot(rcv2sat_unit) + ddt[0] + dopp_sagnac - svddt*LIGHT_SPEED;
 
-            gtsam::Vector2 residual;
+            gtsam::Vector residual(2);
             
             {    
                 residual[0] = (psr_estimated - psr_measured) * pr_weight;

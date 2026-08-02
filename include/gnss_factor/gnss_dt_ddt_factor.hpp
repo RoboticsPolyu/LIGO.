@@ -56,7 +56,7 @@ class DtDdtFactor : public gtsam::NoiseModelFactor4<gtsam::Vector4, gtsam::Vecto
             rcv_sys[0] = true; rcv_sys[1] = true; rcv_sys[2] = true; rcv_sys[3] = true;
         }
         virtual ~DtDdtFactor() {}
-        gtsam::Vector evaluateError(const gtsam::Vector4 &dti, const gtsam::Vector4 &dtj, const gtsam::Vector1 &ddti, const gtsam::Vector1 &ddtj, boost::optional<gtsam::Matrix&> H1 = boost::none, boost::optional<gtsam::Matrix&> H2 = boost::none, boost::optional<gtsam::Matrix&> H3 = boost::none, boost::optional<gtsam::Matrix&> H4 = boost::none) const
+        gtsam::Vector evaluateError(const gtsam::Vector4 &dti, const gtsam::Vector4 &dtj, const gtsam::Vector1 &ddti, const gtsam::Vector1 &ddtj, gtsam::OptionalMatrixType H1, gtsam::OptionalMatrixType H2, gtsam::OptionalMatrixType H3, gtsam::OptionalMatrixType H4) const
         {
             if (H1) 
             {

@@ -55,7 +55,7 @@ class GnssLioGravFactor : public gtsam::NoiseModelFactor1<gtsam::Rot3> //, gtsam
         
         virtual ~GnssLioGravFactor() {}
         gtsam::Vector evaluateError(const gtsam::Rot3 &rot,
-        boost::optional<gtsam::Matrix&> H1 = boost::none) const
+        gtsam::OptionalMatrixType H1) const
         {
             if (H1) 
             {

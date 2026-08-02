@@ -37,6 +37,10 @@
 #ifndef GNSS_CP_FACTOR_NOLIDAR_H_
 #define GNSS_CP_FACTOR_NOLIDAR_H_
 
+#include <gtsam/nonlinear/NonlinearFactor.h>
+#include <gtsam/base/Matrix.h>
+#include <gtsam/base/Vector.h>
+
 #include <vector>
 #include <Eigen/Dense>
 #include <gtsam/nonlinear/Marginals.h>
@@ -66,9 +70,9 @@ class GnssCpFactorNolidar : public gtsam::NoiseModelFactor6<gtsam::Rot3, gtsam::
         
         gtsam::Vector evaluateError(const gtsam::Rot3 &rot1, const gtsam::Vector12 &pos1, const gtsam::Rot3 &rot2, const gtsam::Vector12 &pos2, 
             const gtsam::Vector4 &dt1, const gtsam::Vector4 &dt2, 
-            boost::optional<gtsam::Matrix&> H1 = boost::none, boost::optional<gtsam::Matrix&> H2 = boost::none, 
-            boost::optional<gtsam::Matrix&> H3 = boost::none, boost::optional<gtsam::Matrix&> H4 = boost::none,
-            boost::optional<gtsam::Matrix&> H5 = boost::none, boost::optional<gtsam::Matrix&> H6 = boost::none) const
+            gtsam::OptionalMatrixType H1, gtsam::OptionalMatrixType H2, 
+            gtsam::OptionalMatrixType H3, gtsam::OptionalMatrixType H4,
+            gtsam::OptionalMatrixType H5, gtsam::OptionalMatrixType H6) const
         {
             const Eigen::Vector3d P_ecef1 = rot1 * Tex_imu_r + pos1.segment<3>(0);
             const Eigen::Vector3d P_ecef2 = rot2 * Tex_imu_r + pos2.segment<3>(0);

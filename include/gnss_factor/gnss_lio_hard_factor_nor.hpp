@@ -55,7 +55,7 @@ class GnssLioHardFactorNoR : public gtsam::NoiseModelFactor1<gtsam::Vector6> //,
         
         virtual ~GnssLioHardFactorNoR() {}
         gtsam::Vector evaluateError(const gtsam::Vector6 &pos_vel,
-        boost::optional<gtsam::Matrix&> H1 = boost::none) const
+        gtsam::OptionalMatrixType H1) const
         {
             if (H1)
             {

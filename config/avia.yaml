@@ -38,6 +38,9 @@ mapping:
                     0.0, 0.0, 1.0] # extrinsics of LiDAR to IMU represented in IMU frame
 
 gnss:
+    # Full mapping mode. Keep this explicit so a previous GNSS/IMU-only
+    # roslaunch cannot leave a stale private parameter in a reused ROS master.
+    nolidar: false
     gnss_enable: true                  # enable fuse GNSS
     ephem_from_rinex: false            # true: read ephem from rinex. false: get ephem from rosbag
     ephem_file_name: " "
@@ -48,6 +51,37 @@ gnss:
     outlier_rejection: true            # true: use robust function for gnss factors
     psr_dopp_weight: 1 # 10
     cp_weight: 10 
+    # Float RTK: base epochs must use the same GPST seconds as rover observations.
+    use_double_differences: true
+    use_secondary: true                # GPS L2, Galileo E5b, BeiDou B2
+    use_l5: true                       # add GPS L5/Galileo E5a/BeiDou B2a carrier DD factors
+    # RINEX 3.02 file, ZIP archive, or directory. This directory contains two
+    # consecutive HKSC hourly observation archives.
+    base_station_file: "2026-Aug-02_001813"
+    base_epoch_tolerance: 0.05
+    # Base RINEX is 1 Hz; keep this independent of 10 Hz rover GNSS period.
+    rtk_ambiguity_gap_tolerance: 5
+    # RINEX LLI/SSI fields do not provide carrier standard deviation.
+    base_carrier_std_cycles: 0.01
+    # DD noise is computed from all four carrier-phase uncertainties; this
+    # value is only a residual atmosphere/multipath modelling floor [m].
+    double_difference_sigma_floor: 0.01 # 0.003
+    ambiguity_prior_sigma: 100.0
+    # LAMBDA partial ambiguity resolution and fix-and-hold constraints.
+    enable_integer_fixing: true
+    # This dataset normally has three stable integer-compatible DD arcs after
+    # elevation filtering; covariance and ratio gates still protect the fix.
+    lambda_min_ambiguities: 3
+    lambda_min_lock_epochs: 10
+    lambda_ratio_threshold: 3.0
+    lambda_max_std_cycles: 0.25
+    fixed_ambiguity_sigma_cycles: 0.001
+    # Structured [RTK-DD], [RTK-FLOAT], and [RTK-LAMBDA] runtime diagnostics.
+    rtk_debug: true
+    rtk_debug_epoch_interval: 10
+    # RViz equivalent sky view: retain true LOS direction at a local radius.
+    rtk_satellite_visualization: true
+    rtk_satellite_display_radius: 50.0
     gnss_meas_topic: "/ublox_driver/range_meas"           # GNSS raw measurement topic
     gnss_ephem_topic: "/ublox_driver/ephem"               # GPS, Galileo, BeiDou ephemeris
     gnss_glo_ephem_topic: "/ublox_driver/glo_ephem"       # GLONASS ephemeris
@@ -60,7 +94,7 @@ gnss:
     gnss_dopp_std_thres: 30.0           # doppler std threshold
     gnss_cp_std_thres: 30.0             # carrier phase std threshold
     gnss_cp_time_thres: 100.0           # single-differenced carrier phase factor time threshold
-    gtsam_variable_thres: 30            # the window size for GNSS obs
+    gtsam_variable_thres: 2000            # the window size for GNSS obs
     gtsam_marg_variable_thres: 1
     gnss_sample_period: 0.1             # = 1 / frequency of GNSS obs
     outlier_thres: 1 # 1                # parameter for robust function of GNSS factors

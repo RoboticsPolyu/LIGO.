@@ -57,7 +57,7 @@ class GnssLioFactor : public gtsam::NoiseModelFactor2<gtsam::Vector6, gtsam::Vec
         }
         virtual ~GnssLioFactor() {}
         gtsam::Vector evaluateError(const gtsam::Vector6 &pos_vel_bias1, const gtsam::Vector6 &pos_vel_bias2, 
-            boost::optional<gtsam::Matrix&> H1 = boost::none, boost::optional<gtsam::Matrix&> H2 = boost::none) const
+            gtsam::OptionalMatrixType H1, gtsam::OptionalMatrixType H2) const
         {
 
             // Eigen::Matrix3d d = rot1.transpose() * rot2.matrix();

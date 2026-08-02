@@ -37,7 +37,12 @@
 #ifndef DDT_SMOOTH_FACTOR_H_
 #define DDT_SMOOTH_FACTOR_H_
 
+
 #include <Eigen/Dense>
+
+#include <gtsam/nonlinear/NonlinearFactor.h>
+#include <gtsam/base/Matrix.h>
+#include <gtsam/base/Vector.h>
 
 // #include <gtsam/geometry/Rot3.h>
 // #include <gtsam/geometry/Pose3.h>
@@ -58,7 +63,7 @@ class DdtSmoothFactor : public gtsam::NoiseModelFactor2<gtsam::Vector1, gtsam::V
         gtsam::NoiseModelFactor2<gtsam::Vector1, gtsam::Vector1>(model, i, j) {
         }
         virtual ~DdtSmoothFactor() {}
-        gtsam::Vector evaluateError(const gtsam::Vector1 &ddti, const gtsam::Vector1 &ddtj, boost::optional<gtsam::Matrix&> H1 = boost::none, boost::optional<gtsam::Matrix&> H2 = boost::none) const
+        gtsam::Vector evaluateError(const gtsam::Vector1 &ddti, const gtsam::Vector1 &ddtj, gtsam::OptionalMatrixType H1, gtsam::OptionalMatrixType H2) const
         {
             if (H1) //(*H1) = (gtsam::Matrix(1,1)<<-1.0).finished();
             {

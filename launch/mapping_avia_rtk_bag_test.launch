@@ -1,0 +1,12 @@
+<launch>
+  <!-- Headless integration launch for Dataset/2025-03-21-16-46-47.bag.
+       The bag publishes livox_ros_driver2/CustomMsg while this repository
+       consumes livox_ros_driver/CustomMsg, so use the GNSS/IMU-only branch. -->
+  <node pkg="ligo" type="ligo_mapping" name="laserMapping" output="screen">
+    <rosparam command="load" file="$(find ligo)/config/avia.yaml" />
+    <param name="gnss/nolidar" type="bool" value="true" />
+    <param name="prop_at_freq_of_imu" type="bool" value="true" />
+    <param name="check_satu" type="bool" value="true" />
+    <param name="runtime_pos_log_enable" type="bool" value="false" />
+  </node>
+</launch>

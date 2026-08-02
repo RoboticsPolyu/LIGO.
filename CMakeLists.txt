@@ -1,7 +1,9 @@
 cmake_minimum_required(VERSION 2.8.3)
 project(ligo)
 
-SET(CMAKE_BUILD_TYPE "Debug")
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE "Release")
+endif()
 
 ADD_COMPILE_OPTIONS(-std=c++17 )
 ADD_COMPILE_OPTIONS(-std=c++17 )
@@ -50,6 +52,7 @@ find_package(catkin REQUIRED COMPONENTS
   roscpp
   rospy
   std_msgs
+  visualization_msgs
   pcl_ros
   tf
   cv_bridge
@@ -65,6 +68,10 @@ find_package(GTSAM REQUIRED QUIET)
 find_package(PCL 1.8 REQUIRED)
 find_package(Ceres REQUIRED)
 find_package(Sophus REQUIRED)
+find_library(ZIP_LIBRARY zip)
+if(NOT ZIP_LIBRARY)
+  message(FATAL_ERROR "libzip is required for archived RINEX base observations")
+endif()
 
 message(Eigen: ${EIGEN3_INCLUDE_DIR})
 
@@ -96,7 +103,7 @@ generate_messages(
 )
 
 catkin_package(
-  CATKIN_DEPENDS geometry_msgs nav_msgs roscpp rospy std_msgs message_runtime
+  CATKIN_DEPENDS geometry_msgs nav_msgs roscpp rospy std_msgs visualization_msgs message_runtime
   DEPENDS EIGEN3 PCL GTSAM CERES
   INCLUDE_DIRS
 )
@@ -104,14 +111,48 @@ catkin_package(
 add_executable(ligo_mapping src/laserMapping.cpp 
                 include/Urbannav_process/handler.cpp
                 src/li_initialization.cpp src/parameters.cpp src/preprocess.cpp src/Estimator.cpp 
-                src/IMU_Processing.cpp src/GNSS_Processing_fg.cpp src/GNSS_Initialization.cpp src/GNSS_Assignment.cpp
+                src/IMU_Processing.cpp src/GNSS_Processing_fg.cpp src/BaseStationData.cpp src/LambdaAmbiguityResolver.cpp src/GNSS_Initialization.cpp src/GNSS_Assignment.cpp
                 src/NMEA_Processing_fg.cpp src/NMEA_Assignment.cpp)
-target_link_libraries(ligo_mapping ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${CERES_LIBRARIES} ${OpenCV_LIBS} ${PYTHON_LIBRARIES} ceres gtsam)
+target_link_libraries(ligo_mapping ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${CERES_LIBRARIES} ${OpenCV_LIBS} ${PYTHON_LIBRARIES} ceres gtsam ${ZIP_LIBRARY})
 target_link_libraries(ligo_mapping
 		dw
 		)
 target_link_libraries(ligo_mapping ${Sophus_LIBRARIES} fmt)
 target_include_directories(ligo_mapping PRIVATE ${PYTHON_INCLUDE_DIRS})
 
-
-
+if(CATKIN_ENABLE_TESTING)
+  find_package(rosbag REQUIRED)
+  catkin_add_gtest(test_base_station_data
+                   test/test_base_station_data.cpp
+                   src/BaseStationData.cpp)
+  if(TARGET test_base_station_data)
+    target_include_directories(test_base_station_data PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(test_base_station_data ${catkin_LIBRARIES} ${ZIP_LIBRARY})
+  endif()
+  catkin_add_gtest(test_base_station_constellation_counts
+                   test/test_base_station_constellation_counts.cpp
+                   src/BaseStationData.cpp)
+  if(TARGET test_base_station_constellation_counts)
+    target_include_directories(test_base_station_constellation_counts PRIVATE
+                               ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(test_base_station_constellation_counts
+                          ${catkin_LIBRARIES} ${ZIP_LIBRARY})
+  endif()
+  catkin_add_gtest(test_rtk_bag_compatibility
+                   test/test_rtk_bag_compatibility.cpp
+                   src/BaseStationData.cpp)
+  if(TARGET test_rtk_bag_compatibility)
+    target_include_directories(test_rtk_bag_compatibility PRIVATE
+                               ${CMAKE_CURRENT_SOURCE_DIR}/src
+                               ${rosbag_INCLUDE_DIRS})
+    target_link_libraries(test_rtk_bag_compatibility
+                          ${catkin_LIBRARIES} ${rosbag_LIBRARIES} ${ZIP_LIBRARY})
+  endif()
+  catkin_add_gtest(test_rtk_core
+                   test/test_rtk_core.cpp
+                   src/LambdaAmbiguityResolver.cpp)
+  if(TARGET test_rtk_core)
+    target_include_directories(test_rtk_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(test_rtk_core ${catkin_LIBRARIES} gtsam)
+  endif()
+endif()

@@ -146,8 +146,8 @@ class GnssLioGravHardFactor : public gtsam::NoiseModelFactor4<gtsam::Rot3, gtsam
         }
 
         gtsam::Vector evaluateError(const gtsam::Rot3 &rot_ext, const gtsam::Vector3 &pos_ext, const gtsam::Rot3 &rot, const gtsam::Vector6 &pos_vel,
-        boost::optional<gtsam::Matrix&> H1 = boost::none, boost::optional<gtsam::Matrix&> H2 = boost::none,
-        boost::optional<gtsam::Matrix&> H3 = boost::none, boost::optional<gtsam::Matrix&> H4 = boost::none) const
+        gtsam::OptionalMatrixType H1, gtsam::OptionalMatrixType H2,
+        gtsam::OptionalMatrixType H3, gtsam::OptionalMatrixType H4) const
         {
             Eigen::Matrix3d res_R = rot_lio.transpose() * rot.matrix();
             Eigen::Vector3d res_r = gtsam::Rot3::Logmap(gtsam::Rot3(res_R));

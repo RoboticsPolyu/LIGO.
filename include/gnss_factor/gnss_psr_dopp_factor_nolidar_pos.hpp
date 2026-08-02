@@ -75,7 +75,7 @@ class GnssPsrDoppFactorNolidarPos : public gtsam::NoiseModelFactor3<gtsam::Vecto
         }
         virtual ~GnssPsrDoppFactorNolidarPos() {}
         gtsam::Vector evaluateError(const gtsam::Vector12 &pos_vel_bias, const gtsam::Vector4 &dt, const gtsam::Vector1 &ddt,
-            boost::optional<gtsam::Matrix&> H1 = boost::none, boost::optional<gtsam::Matrix&> H2 = boost::none, boost::optional<gtsam::Matrix&> H3 = boost::none) const
+            gtsam::OptionalMatrixType H1, gtsam::OptionalMatrixType H2, gtsam::OptionalMatrixType H3) const
         {          
             const Eigen::Vector3d local_pos = rot * Tex_imu_r + pos_vel_bias.segment<3>(0);
             const Eigen::Vector3d local_vel = pos_vel_bias.segment<3>(3) + rot * hat_omg_T;
@@ -110,7 +110,7 @@ class GnssPsrDoppFactorNolidarPos : public gtsam::NoiseModelFactor3<gtsam::Vecto
                     sv_pos(0)*V_ecef(1) - sv_vel(1)*P_ecef(0) - sv_pos(1)*V_ecef(0));
             double dopp_estimated = (sv_vel - V_ecef).dot(rcv2sat_unit) + ddt[0] + dopp_sagnac - svddt*LIGHT_SPEED;
 
-            gtsam::Vector2 residual;
+            gtsam::Vector residual(2);
             
             {    
                 residual[0] = (psr_estimated - psr_measured) * pr_weight;

@@ -65,8 +65,8 @@ class NMEAFactor : public gtsam::NoiseModelFactor4<gtsam::Rot3, gtsam::Vector3, 
         virtual ~NMEAFactor() {}
 
         gtsam::Vector evaluateError(const gtsam::Rot3 &rot_ext, const gtsam::Vector3 &pos_ext, const gtsam::Vector6 &pos_vel, const gtsam::Rot3 &rot,
-            boost::optional<gtsam::Matrix&> H1 = boost::none, boost::optional<gtsam::Matrix&> H2 = boost::none, 
-            boost::optional<gtsam::Matrix&> H3 = boost::none, boost::optional<gtsam::Matrix&> H4 = boost::none) const
+            gtsam::OptionalMatrixType H1, gtsam::OptionalMatrixType H2, 
+            gtsam::OptionalMatrixType H3, gtsam::OptionalMatrixType H4) const
         {
             Eigen::Vector3d ref_enu = pos_ext;
 

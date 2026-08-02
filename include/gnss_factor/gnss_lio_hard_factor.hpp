@@ -55,7 +55,7 @@ class GnssLioHardFactor : public gtsam::NoiseModelFactor2<gtsam::Rot3, gtsam::Ve
         
         virtual ~GnssLioHardFactor() {}
         gtsam::Vector evaluateError(const gtsam::Rot3 &rot, const gtsam::Vector6 &pos_vel,
-        boost::optional<gtsam::Matrix&> H1 = boost::none, boost::optional<gtsam::Matrix&> H2 = boost::none) const
+        gtsam::OptionalMatrixType H1, gtsam::OptionalMatrixType H2) const
         {
             Eigen::Matrix3d res_R = rot_lio.transpose() * rot.matrix();
             Eigen::Vector3d res_r = gtsam::Rot3::Logmap(gtsam::Rot3(res_R));

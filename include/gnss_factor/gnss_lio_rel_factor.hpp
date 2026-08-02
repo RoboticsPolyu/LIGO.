@@ -148,13 +148,13 @@ class GnssLioFactor : public gtsam::NoiseModelFactor6<gtsam::Rot3, gtsam::Vector
         }
 
         gtsam::Vector evaluateError(const gtsam::Rot3 &rot_ext, const gtsam::Vector3 &pos_ext, const gtsam::Rot3 &rot1, const gtsam::Vector6 &pos_vel_bias1, const gtsam::Vector12 &others_, const gtsam::Vector3 &grav_, 
-        boost::optional<gtsam::Matrix&> H1 = boost::none, boost::optional<gtsam::Matrix&> H2 = boost::none, 
-        boost::optional<gtsam::Matrix&> H3 = boost::none, boost::optional<gtsam::Matrix&> H4 = boost::none, 
-        boost::optional<gtsam::Matrix&> H5 = boost::none, boost::optional<gtsam::Matrix&> H6 = boost::none) const
+        gtsam::OptionalMatrixType H1, gtsam::OptionalMatrixType H2, 
+        gtsam::OptionalMatrixType H3, gtsam::OptionalMatrixType H4, 
+        gtsam::OptionalMatrixType H5, gtsam::OptionalMatrixType H6) const
         {
 
             // Eigen::Matrix3d d = rot1.transpose() * rot2.matrix();
-Eigen::Matrix3d res_R = rel_rot.transpose() * rot1.matrix();
+            Eigen::Matrix3d res_R = rel_rot.transpose() * rot1.matrix();
             Eigen::Vector3d res_r = gtsam::Rot3::Logmap(gtsam::Rot3(res_R));
             // Eigen::Vector3d delta_p = rot1.transpose() * (pos_vel_bias2.segment<3>(0) - pos_vel_bias1.segment<3>(0) - pos_vel_bias1.segment<3>(3) * dt - 0.5 * grav * dt * dt);
             // Eigen::Vector3d delta_p = pos_vel_bias2.segment<3>(0) - pos_vel_bias1.segment<3>(0); // - pos_vel_bias1.segment<3>(3) * dt - 0.5 * grav * dt * dt);

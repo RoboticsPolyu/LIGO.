@@ -58,7 +58,7 @@ class GnssLioFactorNolidar : public gtsam::NoiseModelFactor4<gtsam::Rot3, gtsam:
         }
         virtual ~GnssLioFactorNolidar() {}
         gtsam::Vector evaluateError(const gtsam::Rot3 &rot1, const gtsam::Vector12 &pos_vel_bias1, const gtsam::Rot3 &rot2, const gtsam::Vector12 &pos_vel_bias2, 
-            boost::optional<gtsam::Matrix&> H1 = boost::none, boost::optional<gtsam::Matrix&> H2 = boost::none, boost::optional<gtsam::Matrix&> H3 = boost::none, boost::optional<gtsam::Matrix&> H4 = boost::none) const
+            gtsam::OptionalMatrixType H1, gtsam::OptionalMatrixType H2, gtsam::OptionalMatrixType H3, gtsam::OptionalMatrixType H4) const
         {
             Eigen::Matrix3d d = rot1.transpose() * rot2.matrix();
             Eigen::Vector3d delta_p = rot1.transpose() * (pos_vel_bias2.segment<3>(0) - pos_vel_bias1.segment<3>(0) - pos_vel_bias1.segment<3>(3) * dt - 0.5 * grav * dt * dt);

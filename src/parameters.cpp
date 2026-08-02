@@ -197,6 +197,37 @@ void readParameters(ros::NodeHandle &nh)
     {
         nh.param<double>("gnss/psr_dopp_weight",p_gnss->relative_sqrt_info, 10);
         nh.param<double>("gnss/cp_weight",p_gnss->cp_weight, 0.1);
+        nh.param<bool>("gnss/use_double_differences", p_gnss->use_double_differences, false);
+        nh.param<bool>("gnss/use_secondary", p_gnss->use_secondary, true);
+        nh.param<bool>("gnss/use_l5", p_gnss->use_l5, true);
+        nh.param<double>("gnss/base_epoch_tolerance", p_gnss->base_epoch_tolerance, 0.05);
+        nh.param<double>("gnss/rtk_ambiguity_gap_tolerance", p_gnss->rtk_ambiguity_gap_tolerance, 1.5);
+        nh.param<double>("gnss/base_carrier_std_cycles", p_gnss->base_carrier_std_cycles, 0.01);
+        // Prefer the adaptive-noise floor parameter. The legacy fixed-sigma
+        // name remains a compatibility fallback and is interpreted as a floor.
+        if (!nh.getParam("gnss/double_difference_sigma_floor",
+                         p_gnss->double_difference_sigma_floor))
+          nh.param<double>("gnss/double_difference_sigma",
+                           p_gnss->double_difference_sigma_floor, 0.003);
+        nh.param<double>("gnss/ambiguity_prior_sigma", p_gnss->ambiguity_prior_sigma, 100.0);
+        nh.param<bool>("gnss/enable_integer_fixing", p_gnss->enable_integer_fixing, true);
+        nh.param<int>("gnss/lambda_min_ambiguities", p_gnss->lambda_min_ambiguities, 4);
+        nh.param<int>("gnss/lambda_min_lock_epochs", p_gnss->lambda_min_lock_epochs, 10);
+        nh.param<double>("gnss/lambda_ratio_threshold", p_gnss->lambda_ratio_threshold, 3.0);
+        nh.param<double>("gnss/lambda_max_std_cycles", p_gnss->lambda_max_std_cycles, 0.25);
+        nh.param<double>("gnss/fixed_ambiguity_sigma_cycles", p_gnss->fixed_ambiguity_sigma_cycles, 0.001);
+        nh.param<bool>("gnss/rtk_debug", p_gnss->rtk_debug, true);
+        nh.param<int>("gnss/rtk_debug_epoch_interval", p_gnss->rtk_debug_epoch_interval, 10);
+        nh.param<bool>("gnss/rtk_satellite_visualization",
+                       p_gnss->rtk_satellite_visualization, true);
+        nh.param<double>("gnss/rtk_satellite_display_radius",
+                         p_gnss->rtk_satellite_display_radius, 50.0);
+        std::string base_station_file;
+        nh.param<string>("gnss/base_station_file", base_station_file, "2026-Aug-02_001813");
+        if (p_gnss->use_double_differences)
+        {
+            p_gnss->loadBaseStationFile(LOCAL_FILE_DIR(base_station_file));
+        }
         nh.param<bool>("gnss/outlier_rejection", p_gnss->p_assign->outlier_rej, false);
         nh.param<string>("gnss/gnss_ephem_topic",gnss_ephem_topic,"/ublox_driver/ephem");
         nh.param<string>("gnss/gnss_glo_ephem_topic",gnss_glo_ephem_topic,"/ublox_driver/glo_ephem");

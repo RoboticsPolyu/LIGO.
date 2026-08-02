@@ -38,6 +38,7 @@
 #include <nav_msgs/Odometry.h>
 #include <nav_msgs/Path.h>
 #include <visualization_msgs/Marker.h>
+#include <std_msgs/ColorRGBA.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
@@ -45,11 +46,13 @@
 #include <pcl/io/pcd_io.h>
 #include <tf/transform_datatypes.h>
 #include <tf/transform_broadcaster.h>
+#include <map>
 #include "li_initialization.h"
 #include <malloc.h>
 // #include <cv_bridge/cv_bridge.h>
 #include <opencv2/opencv.hpp>
 #include "chi-square.h"
+#include "RtkSignalUtils.h"
 // #include <ros/console.h>
 
 
@@ -81,6 +84,224 @@ V3D euler_cur;
 nav_msgs::Path path;
 nav_msgs::Odometry odomAftMapped;
 geometry_msgs::PoseStamped msg_body_pose;
+
+enum class SatelliteMarkerStage
+{
+    Raw,
+    Valid,
+    RtkCandidate
+};
+
+struct VisualizedSatellite
+{
+    GNSSProcess::RtkSatelliteDirection direction;
+    SatelliteMarkerStage stage = SatelliteMarkerStage::Raw;
+};
+
+std_msgs::ColorRGBA satelliteStageColor(SatelliteMarkerStage stage,
+                                        float alpha = 1.0f)
+{
+    std_msgs::ColorRGBA color;
+    color.a = alpha;
+    switch (stage)
+    {
+        case SatelliteMarkerStage::Raw:
+            color.r = color.g = color.b = 0.55f;
+            break;
+        case SatelliteMarkerStage::Valid:
+            color.r = 1.0f; color.g = 0.72f; color.b = 0.05f;
+            break;
+        case SatelliteMarkerStage::RtkCandidate:
+            color.r = 0.1f; color.g = 0.95f; color.b = 0.25f;
+            break;
+    }
+    return color;
+}
+
+const char *satelliteStageName(SatelliteMarkerStage stage)
+{
+    switch (stage)
+    {
+        case SatelliteMarkerStage::Raw: return "RAW";
+        case SatelliteMarkerStage::Valid: return "VALID";
+        case SatelliteMarkerStage::RtkCandidate: return "RTK";
+    }
+    return "UNKNOWN";
+}
+
+geometry_msgs::Point eigenToRosPoint(const Eigen::Vector3d &point)
+{
+    geometry_msgs::Point output;
+    output.x = point.x();
+    output.y = point.y();
+    output.z = point.z();
+    return output;
+}
+
+/**
+ * Draw a compact satellite sky view around the rover antenna.  Each satellite
+ * is assigned its highest processing stage so overlapping layers remain clear:
+ * grey = raw-only, amber = front-end valid, green = synchronized RTK candidate.
+ *
+ * Satellite ECEF positions are tens of thousands of kilometres away and
+ * cannot share a useful RViz scale with a LiDAR map.  Each marker therefore
+ * lies at display_radius metres from the antenna along the true local LOS.
+ * The label and ray make clear that this is an equivalent display position.
+ */
+void publishRtkSatellites(const ros::Publisher &publisher,
+                          const GNSSProcess &gnss,
+                          const Eigen::Vector3d &receiver_local,
+                          double timestamp)
+{
+    static bool previously_published = false;
+    std::map<uint32_t, VisualizedSatellite> satellites;
+    for (const auto &direction : gnss.rawSatelliteDirections())
+        satellites[direction.satellite] = {direction, SatelliteMarkerStage::Raw};
+    for (const auto &direction : gnss.validSatelliteDirections())
+        satellites[direction.satellite] = {direction, SatelliteMarkerStage::Valid};
+
+    // RTK candidates are retained from the latest synchronized base epoch.
+    // Upgrade only satellites that are still valid in the current rover epoch,
+    // avoiding stale green markers after a satellite disappears.
+    for (const auto &direction : gnss.rtkSatelliteDirections())
+    {
+        const auto found = satellites.find(direction.satellite);
+        if (found == satellites.end() ||
+            found->second.stage != SatelliteMarkerStage::Valid) continue;
+        found->second.stage = SatelliteMarkerStage::RtkCandidate;
+    }
+    if (satellites.empty() && !previously_published) return;
+
+    visualization_msgs::Marker clear;
+    clear.header.frame_id = "camera_init";
+    clear.header.stamp = ros::Time().fromSec(timestamp);
+    clear.action = visualization_msgs::Marker::DELETEALL;
+    publisher.publish(clear);
+    previously_published = !satellites.empty();
+    if (satellites.empty()) return;
+
+    const auto make_points = [&](const std::string &name,
+                                 SatelliteMarkerStage stage)
+    {
+        visualization_msgs::Marker marker;
+        marker.header = clear.header;
+        marker.ns = name;
+        marker.id = 0;
+        marker.type = visualization_msgs::Marker::SPHERE_LIST;
+        marker.action = visualization_msgs::Marker::ADD;
+        marker.pose.orientation.w = 1.0;
+        marker.scale.x = marker.scale.y = marker.scale.z = 1.8;
+        marker.color = satelliteStageColor(stage);
+        return marker;
+    };
+    const auto make_rays = [&](const std::string &name,
+                               SatelliteMarkerStage stage)
+    {
+        visualization_msgs::Marker marker;
+        marker.header = clear.header;
+        marker.ns = name;
+        marker.id = 0;
+        marker.type = visualization_msgs::Marker::LINE_LIST;
+        marker.action = visualization_msgs::Marker::ADD;
+        marker.pose.orientation.w = 1.0;
+        marker.scale.x = 0.14;
+        marker.color = satelliteStageColor(stage, 0.45f);
+        return marker;
+    };
+
+    visualization_msgs::Marker raw_points =
+        make_points("satellites_raw_only", SatelliteMarkerStage::Raw);
+    visualization_msgs::Marker valid_points =
+        make_points("satellites_valid", SatelliteMarkerStage::Valid);
+    visualization_msgs::Marker rtk_points =
+        make_points("satellites_rtk_candidates",
+                    SatelliteMarkerStage::RtkCandidate);
+    visualization_msgs::Marker raw_rays =
+        make_rays("satellite_rays_raw_only", SatelliteMarkerStage::Raw);
+    visualization_msgs::Marker valid_rays =
+        make_rays("satellite_rays_valid", SatelliteMarkerStage::Valid);
+    visualization_msgs::Marker rtk_rays =
+        make_rays("satellite_rays_rtk_candidates",
+                  SatelliteMarkerStage::RtkCandidate);
+
+    const geometry_msgs::Point receiver_point = eigenToRosPoint(receiver_local);
+    size_t label_id = 100;
+    size_t raw_count = 0, valid_count = 0, rtk_count = 0;
+    for (const auto &entry : satellites)
+    {
+        const auto &direction = entry.second.direction;
+        const SatelliteMarkerStage stage = entry.second.stage;
+        const Eigen::Vector3d equivalent = rtkEquivalentSatellitePoint(
+            receiver_local, direction.local_unit_direction,
+            gnss.rtk_satellite_display_radius);
+        const geometry_msgs::Point equivalent_point = eigenToRosPoint(equivalent);
+        visualization_msgs::Marker *points = nullptr;
+        visualization_msgs::Marker *rays = nullptr;
+        if (stage == SatelliteMarkerStage::Raw)
+        {
+            points = &raw_points; rays = &raw_rays; ++raw_count;
+        }
+        else if (stage == SatelliteMarkerStage::Valid)
+        {
+            points = &valid_points; rays = &valid_rays; ++valid_count;
+        }
+        else
+        {
+            points = &rtk_points; rays = &rtk_rays; ++rtk_count;
+        }
+        points->points.push_back(equivalent_point);
+        rays->points.push_back(receiver_point);
+        rays->points.push_back(equivalent_point);
+
+        visualization_msgs::Marker label;
+        label.header = clear.header;
+        label.ns = "satellite_stage_labels";
+        label.id = static_cast<int>(label_id++);
+        label.type = visualization_msgs::Marker::TEXT_VIEW_FACING;
+        label.action = visualization_msgs::Marker::ADD;
+        label.pose.position = equivalent_point;
+        label.pose.position.z += 1.8;
+        label.pose.orientation.w = 1.0;
+        label.scale.z = 1.8;
+        label.color = satelliteStageColor(stage);
+        label.text = gnss_comm::sat2str(direction.satellite) +
+                     std::string(" [") + satelliteStageName(stage) + "]";
+        publisher.publish(label);
+    }
+
+    if (!raw_points.points.empty())
+    {
+        publisher.publish(raw_points);
+        publisher.publish(raw_rays);
+    }
+    if (!valid_points.points.empty())
+    {
+        publisher.publish(valid_points);
+        publisher.publish(valid_rays);
+    }
+    if (!rtk_points.points.empty())
+    {
+        publisher.publish(rtk_points);
+        publisher.publish(rtk_rays);
+    }
+
+    visualization_msgs::Marker legend;
+    legend.header = clear.header;
+    legend.ns = "satellite_stage_legend";
+    legend.id = 0;
+    legend.type = visualization_msgs::Marker::TEXT_VIEW_FACING;
+    legend.action = visualization_msgs::Marker::ADD;
+    legend.pose.position = receiver_point;
+    legend.pose.position.z += 4.0;
+    legend.pose.orientation.w = 1.0;
+    legend.scale.z = 1.5;
+    legend.color.r = legend.color.g = legend.color.b = 1.0f;
+    legend.color.a = 0.95f;
+    legend.text = "RAW-only(gray): " + std::to_string(raw_count) +
+                  "  VALID(amber): " + std::to_string(valid_count) +
+                  "  RTK(green): " + std::to_string(rtk_count);
+    publisher.publish(legend);
+}
 
 void SigHandle(int sig)
 {
@@ -533,6 +754,8 @@ int main(int argc, char** argv)
             ("/path", 1000);
     ros::Publisher plane_pub = nh.advertise<visualization_msgs::Marker>
             ("/planner_normal", 1000);
+    ros::Publisher rtk_satellite_pub = nh.advertise<visualization_msgs::Marker>
+            ("/rtk_satellites", 100);
     // ros::Publisher pub_gnss_lla = nh.advertise<sensor_msgs::NavSatFix>("gnss_fused_lla", 1000);
     
 //------------------------------------------------------------------------------------------------------
@@ -1762,6 +1985,13 @@ int main(int argc, char** argv)
             if (path_en)                         publish_path(pubPath);
             if (scan_pub_en || pcd_save_en)      publish_frame_world(pubLaserCloudFullRes);
             if (scan_pub_en && scan_body_pub_en) publish_frame_body(pubLaserCloudFullRes_body);
+            if (GNSS_ENABLE && p_gnss->rtk_satellite_visualization)
+            {
+                const Eigen::Vector3d gnss_antenna_local =
+                    kf_output.x_.pos + kf_output.x_.rot * p_gnss->Tex_imu_r;
+                publishRtkSatellites(rtk_satellite_pub, *p_gnss,
+                                     gnss_antenna_local, lidar_end_time);
+            }
             
             /*** Debug variables Logging ***/
             if (runtime_pos_log)
