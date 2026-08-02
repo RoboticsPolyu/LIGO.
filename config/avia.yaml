@@ -67,6 +67,7 @@ gnss:
     # DD noise is computed from all four carrier-phase uncertainties; this
     # value is only a residual atmosphere/multipath modelling floor [m].
     double_difference_sigma_floor: 0.01 # 0.003
+    double_difference_pseudorange_sigma: 2.0 # primary-band code DD sigma [m]
     ambiguity_prior_sigma: 100.0
     # LAMBDA partial ambiguity resolution and fix-and-hold constraints.
     enable_integer_fixing: true

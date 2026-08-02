@@ -190,6 +190,7 @@ class GNSSProcess
   // Residual modelling floor only. Each DD factor also propagates the four
   // rover/base carrier-phase standard deviations from its observations.
   double double_difference_sigma_floor = 0.003;
+  double double_difference_pseudorange_sigma = 2.0;
   double ambiguity_prior_sigma = 100.0;
   // Conservative LAMBDA validation and fix-and-hold thresholds.
   bool enable_integer_fixing = true;
@@ -204,6 +205,7 @@ class GNSSProcess
   size_t rtk_base_epoch_misses = 0;
   size_t rtk_zero_factor_epochs = 0;
   size_t rtk_double_difference_factors = 0;
+  size_t rtk_double_difference_pseudorange_factors = 0;
   size_t rtk_secondary_factors = 0;
   size_t rtk_l5_factors = 0;
   // Runtime observability for distinguishing synchronized, float, and fixed RTK.

@@ -67,6 +67,7 @@
 // #include <gnss_factor/gnss_lio_gravity_factor.hpp>
 #include <gnss_factor/gnss_cp_factor_nolidar.hpp>
 #include <gnss_factor/gnss_double_diff_carrier_factor.hpp>
+#include <gnss_factor/gnss_double_diff_pseudorange_factor.hpp>
 // #include <gnss_factor/gnss_cp_factor_nolidar_pos.hpp>
 #include <gnss_factor/gnss_ddt_smooth_factor.hpp>
 #include <gnss_factor/gnss_dt_ddt_factor.hpp>

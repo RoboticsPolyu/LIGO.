@@ -1,6 +1,7 @@
 #include "LambdaAmbiguityResolver.h"
 #include "RtkSignalUtils.h"
 #include "gnss_factor/gnss_double_diff_carrier_factor.hpp"
+#include "gnss_factor/gnss_double_diff_pseudorange_factor.hpp"
 
 #include <gtest/gtest.h>
 #include <gtsam/inference/Symbol.h>
@@ -182,6 +183,63 @@ TEST(DoubleDiffCarrierFactor, EcefFactorHasCorrectResidualAndJacobians)
   expectMatrixNear(H1, rotationJacobian(data.rotation, evaluate_rotation), 2.0e-5);
   expectMatrixNear(H2, vectorJacobian(state, evaluate_state), 2.0e-5);
   expectMatrixNear(H3, vectorJacobian(data.ambiguity, evaluate_ambiguity), 2.0e-5);
+}
+
+TEST(DoubleDiffPseudorangeFactor, LocalFactorHasCorrectResidualAndJacobians)
+{
+  const FactorFixture data;
+  const Eigen::Vector3d rover = data.anchor + data.rotation.matrix() *
+      (data.state.head<3>() + data.antenna);
+  const double measured = doubleDifferenceGeometry(
+      rover, data.base, data.satellite, data.reference);
+  const ligo::DoubleDiffPseudorangeFactor factor(
+      gtsam::Symbol('e', 0), gtsam::Symbol('p', 0), gtsam::Symbol('x', 0),
+      data.antenna, data.base, data.satellite, data.reference, measured,
+      data.noise);
+
+  gtsam::Matrix H1, H2, H3;
+  EXPECT_NEAR(factor.evaluateError(data.anchor, data.rotation, data.state,
+                                   &H1, &H2, &H3)[0], 0.0, 1.0e-9);
+  const auto evaluate_anchor = [&](const Eigen::VectorXd &anchor) {
+    return factor.evaluateError(anchor, data.rotation, data.state,
+                                nullptr, nullptr, nullptr);
+  };
+  const auto evaluate_rotation = [&](const gtsam::Rot3 &rotation) {
+    return factor.evaluateError(data.anchor, rotation, data.state,
+                                nullptr, nullptr, nullptr);
+  };
+  const auto evaluate_state = [&](const Eigen::VectorXd &state) {
+    return factor.evaluateError(data.anchor, data.rotation, state,
+                                nullptr, nullptr, nullptr);
+  };
+  expectMatrixNear(H1, vectorJacobian(data.anchor, evaluate_anchor), 2.0e-5);
+  expectMatrixNear(H2, rotationJacobian(data.rotation, evaluate_rotation), 2.0e-5);
+  expectMatrixNear(H3, vectorJacobian(data.state, evaluate_state), 2.0e-5);
+}
+
+TEST(DoubleDiffPseudorangeFactor, EcefFactorHasCorrectResidualAndJacobians)
+{
+  const FactorFixture data;
+  gtsam::Vector12 state = gtsam::Vector12::Zero();
+  state.head<3>() = data.anchor;
+  const Eigen::Vector3d rover = data.anchor + data.rotation * data.antenna;
+  const double measured = doubleDifferenceGeometry(
+      rover, data.base, data.satellite, data.reference);
+  const ligo::DoubleDiffPseudorangeFactorNolidar factor(
+      gtsam::Symbol('r', 0), gtsam::Symbol('f', 0), data.antenna, data.base,
+      data.satellite, data.reference, measured, data.noise);
+
+  gtsam::Matrix H1, H2;
+  EXPECT_NEAR(factor.evaluateError(data.rotation, state, &H1, &H2)[0],
+              0.0, 1.0e-9);
+  const auto evaluate_rotation = [&](const gtsam::Rot3 &rotation) {
+    return factor.evaluateError(rotation, state, nullptr, nullptr);
+  };
+  const auto evaluate_state = [&](const Eigen::VectorXd &candidate) {
+    return factor.evaluateError(data.rotation, candidate, nullptr, nullptr);
+  };
+  expectMatrixNear(H1, rotationJacobian(data.rotation, evaluate_rotation), 2.0e-5);
+  expectMatrixNear(H2, vectorJacobian(state, evaluate_state), 2.0e-5);
 }
 
 TEST(RtkSignalSelection, DistinguishesAndMatchesAllEnabledBands)

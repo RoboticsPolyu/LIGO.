@@ -134,6 +134,10 @@ satellite, the graph also receives supplementary wide-lane and narrow-lane DD
 factors. These combinations have separate ambiguity arcs, propagate the noise
 of both source carriers, and are reset when either source carrier loses lock.
 
+Synchronized primary-band code observations also add double-differenced
+pseudorange factors. Their standard deviation in metres is configured with
+`gnss/double_difference_pseudorange_sigma` (default: `2.0`).
+
 Epoch times must use the same GPST seconds as the rover observations in the
 bag. RINEX UTC and BDT headers are converted to GPST. Note that the supplied
 HKSC archives contain observations from 21 March 2025 at 08:00--10:00 GPST;

@@ -209,6 +209,8 @@ void readParameters(ros::NodeHandle &nh)
                          p_gnss->double_difference_sigma_floor))
           nh.param<double>("gnss/double_difference_sigma",
                            p_gnss->double_difference_sigma_floor, 0.003);
+        nh.param<double>("gnss/double_difference_pseudorange_sigma",
+                         p_gnss->double_difference_pseudorange_sigma, 2.0);
         nh.param<double>("gnss/ambiguity_prior_sigma", p_gnss->ambiguity_prior_sigma, 100.0);
         nh.param<bool>("gnss/enable_integer_fixing", p_gnss->enable_integer_fixing, true);
         nh.param<int>("gnss/lambda_min_ambiguities", p_gnss->lambda_min_ambiguities, 4);

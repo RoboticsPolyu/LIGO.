@@ -228,6 +228,7 @@ void GNSSProcess::Reset()
   rtk_base_epoch_misses = 0;
   rtk_zero_factor_epochs = 0;
   rtk_double_difference_factors = 0;
+  rtk_double_difference_pseudorange_factors = 0;
   rtk_secondary_factors = 0;
   rtk_l5_factors = 0;
   rtk_fix_attempts = 0;
@@ -1423,6 +1424,55 @@ void GNSSProcess::addDoubleDifferenceFactors(
         observations[reference.rover_index]->sat;
   }
 
+  // A code double difference cancels receiver and satellite clock offsets
+  // without adding an ambiguity variable. Reuse the primary carrier reference
+  // so the code and carrier DD residuals have identical geometry.
+  size_t epoch_pseudorange_factors = 0;
+  if (std::isfinite(double_difference_pseudorange_sigma) &&
+      double_difference_pseudorange_sigma > 0.0)
+  {
+    const auto pseudorange_noise = gtsam::noiseModel::Isotropic::Sigma(
+        1, double_difference_pseudorange_sigma);
+    for (size_t index = 0; index < candidates.size(); ++index)
+    {
+      const Candidate &satellite = candidates[index];
+      if (satellite.signal_band != RtkSignalBand::Primary) continue;
+      const ReferenceGroup group(satellite.system, RtkSignalBand::Primary);
+      const auto reference_entry = reference_by_group.find(group);
+      if (reference_entry == reference_by_group.end() ||
+          reference_entry->second == index)
+        continue;
+      const Candidate &reference = candidates[reference_entry->second];
+      const ObsPtr &satellite_obs = observations[satellite.rover_index];
+      const ObsPtr &reference_obs = observations[reference.rover_index];
+      if (static_cast<size_t>(satellite.frequency_index) >= satellite_obs->psr.size() ||
+          static_cast<size_t>(reference.frequency_index) >= reference_obs->psr.size() ||
+          satellite_obs->psr[satellite.frequency_index] <= 0.0 ||
+          reference_obs->psr[reference.frequency_index] <= 0.0 ||
+          satellite.base->pseudorange_m <= 0.0 ||
+          reference.base->pseudorange_m <= 0.0)
+        continue;
+      const double measured =
+          (satellite_obs->psr[satellite.frequency_index] -
+           satellite.base->pseudorange_m) -
+          (reference_obs->psr[reference.frequency_index] -
+           reference.base->pseudorange_m);
+      if (nolidar)
+        p_assign->gtSAMgraph.add(ligo::DoubleDiffPseudorangeFactorNolidar(
+            R(frame_num), F(frame_num), Tex_imu_r,
+            base_station_data_.ecefPosition(), satellite.satellite_ecef,
+            reference.satellite_ecef, measured, pseudorange_noise));
+      else
+        p_assign->gtSAMgraph.add(ligo::DoubleDiffPseudorangeFactor(
+            E(0), P(0), A(frame_num), antenna_offset,
+            base_station_data_.ecefPosition(), satellite.satellite_ecef,
+            reference.satellite_ecef, measured, pseudorange_noise));
+      factor_ids.push_back(id_accumulate++);
+      ++epoch_pseudorange_factors;
+      ++rtk_double_difference_pseudorange_factors;
+    }
+  }
+
   const size_t factors_before = rtk_double_difference_factors;
   const size_t secondary_before = rtk_secondary_factors;
   const size_t l5_before = rtk_l5_factors;
@@ -1663,6 +1713,7 @@ void GNSSProcess::addDoubleDifferenceFactors(
         << " lane_candidates=" << lane_candidates
         << " references=[" << references.str() << ']'
         << " factors_added=" << epoch_factors
+        << " pseudorange_factors_added=" << epoch_pseudorange_factors
         << " dd_sigma_m=[min:"
         << (epoch_factors > 0 ? minimum_dd_sigma_m : 0.0)
         << ",mean:"

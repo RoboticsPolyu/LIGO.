@@ -46,6 +46,7 @@ TEST(BaseStationData, LoadsRinex302AndMatchesPrimarySecondaryL5)
   });
   ASSERT_NE(l5, exact->end());
   EXPECT_NEAR(l5->carrier_cycles, 80743528.462, 1e-6);
+  EXPECT_NEAR(l5->pseudorange_m, 20575706.280, 1e-3);
   EXPECT_EQ(l5->loss_of_lock, 0);
   EXPECT_DOUBLE_EQ(l5->carrier_std_cycles, 0.01);
 

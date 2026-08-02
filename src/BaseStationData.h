@@ -14,6 +14,7 @@ struct BaseCarrierObservation
   double carrier_cycles = 0.0;
   double carrier_std_cycles = 0.0;
   uint8_t loss_of_lock = 0;
+  double pseudorange_m = 0.0;
 };
 
 class BaseStationData

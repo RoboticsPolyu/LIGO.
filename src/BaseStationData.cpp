@@ -52,11 +52,12 @@ uint32_t parseSatellite(const std::string &token)
       system, static_cast<uint32_t>(std::stoul(token.substr(1, 2))));
 }
 
-double carrierFrequency(char system, const std::string &observation_type,
-                        uint32_t satellite,
-                        const std::map<uint32_t, int> &glonass_channels)
+double signalFrequency(char system, const std::string &observation_type,
+                       uint32_t satellite,
+                       const std::map<uint32_t, int> &glonass_channels)
 {
-  if (observation_type.size() != 3 || observation_type.front() != 'L')
+  if (observation_type.size() != 3 ||
+      (observation_type.front() != 'L' && observation_type.front() != 'C'))
     return 0.0;
   const char band = observation_type[1];
   if ((system == 'G' || system == 'E') && band == '1') return FREQ1;
@@ -308,7 +309,7 @@ bool parseRinexObservation(std::istream &input, const std::string &source,
         for (size_t type_index = 0; type_index < type_count; ++type_index)
         {
           const std::string &type = types->second[type_index];
-          const double frequency = carrierFrequency(
+          const double frequency = signalFrequency(
               system, type, satellite, glonass_channels);
           if (frequency <= 0.0) continue;
           const size_t offset = type_index * 16;
@@ -317,18 +318,25 @@ bool parseRinexObservation(std::istream &input, const std::string &source,
               trim(payload.substr(offset, std::min<size_t>(14, payload.size() - offset)));
           if (value_text.empty()) continue;
 
-          BaseCarrierObservation observation;
+          auto &observation = unique[std::make_pair(satellite, frequency)];
           observation.satellite = satellite;
           observation.frequency_hz = frequency;
-          observation.carrier_cycles = std::stod(value_text);
           observation.carrier_std_cycles = carrier_std_cycles;
-          if (offset + 14 < payload.size() &&
-              std::isdigit(static_cast<unsigned char>(payload[offset + 14])))
-            observation.loss_of_lock =
-                static_cast<uint8_t>(payload[offset + 14] - '0');
-          // Keep the first valid phase when a receiver publishes multiple
-          // tracking codes on the same carrier frequency.
-          unique.emplace(std::make_pair(satellite, frequency), observation);
+          if (type.front() == 'C')
+          {
+            // Keep the first valid code when several tracking codes occupy
+            // the same frequency.
+            if (observation.pseudorange_m == 0.0)
+              observation.pseudorange_m = std::stod(value_text);
+          }
+          else if (observation.carrier_cycles == 0.0)
+          {
+            observation.carrier_cycles = std::stod(value_text);
+            if (offset + 14 < payload.size() &&
+                std::isdigit(static_cast<unsigned char>(payload[offset + 14])))
+              observation.loss_of_lock =
+                  static_cast<uint8_t>(payload[offset + 14] - '0');
+          }
         }
       }
 
