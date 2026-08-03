@@ -41,7 +41,6 @@
 #include <cstring>
 #include "preprocess.h"
 #include "GNSS_Processing_fg.h"
-#include "NMEA_Processing_fg.h"
 #include "IMU_Processing.h"
 // #include "LI_init/LI_init.h"
 #include "Urbannav_process/handler.h"
@@ -104,7 +103,7 @@ extern bool   scan_pub_en, scan_body_pub_en;
 extern shared_ptr<Preprocess> p_pre;
 extern shared_ptr<ImuProcess> p_imu;
 extern shared_ptr<GNSSProcess> p_gnss;
-extern shared_ptr<NMEAProcess> p_nmea;
+
 extern bool is_first_frame;
 extern bool dyn_filter;
 extern double dyn_filter_resolution;
@@ -139,5 +138,4 @@ void readParameters(ros::NodeHandle &n);
 void open_file();
 Eigen::Matrix<double, 3, 1> SO3ToEuler(const SO3 &orient);
 void cout_state_to_file(Eigen::Vector3d &pos_enu);
-void cout_state_to_file_nmea();
 void reset_cov_output(Eigen::Matrix<double, 24, 24> & P_init_output);

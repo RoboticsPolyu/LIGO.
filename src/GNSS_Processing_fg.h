@@ -104,6 +104,9 @@ class GNSSProcess
   }
   /// Filter an incoming rover epoch and either initialize or buffer it for Evaluate().
   void processGNSS(const std::vector<ObsPtr> &gnss_meas, state_output &state);
+  /// Export the latest graph estimate, including the direct ECEF state used
+  /// by GNSS+IMU-only mode.
+  void exportOptimizedState(state_output &state);
   /// Estimate the local-to-ECEF alignment from the initialization window.
   bool GNSSLIAlign();
   void updateGNSSStatistics(Eigen::Vector3d &pos);
@@ -200,6 +203,8 @@ class GNSSProcess
   int lambda_min_lock_epochs = 10;
   double lambda_ratio_threshold = 3.0;
   double lambda_max_std_cycles = 0.25;
+  // Innovation gate applied to current DD carrier factors before LAMBDA.
+  double lambda_max_normalized_residual = 3.0;
   double fixed_ambiguity_sigma_cycles = 0.001;
   bool integer_solution_available = false;
   double last_lambda_ratio = 0.0;
@@ -268,6 +273,8 @@ class GNSSProcess
       size_t dd_observation_count = 0;
       double latest_measured = 0.0;
       double latest_geometry = 0.0;
+      double latest_sigma_m = 0.0;
+      gtsam::NoiseModelFactor::shared_ptr latest_factor;
     };
     BaseStationData base_station_data_;
     // (reference satellite, subject satellite, RtkSignalBand value).

@@ -32,6 +32,24 @@ struct RtkLaneCombination
   double wavelength_m = 0.0;
 };
 
+inline double rtkStandardizedResidual(double residual_m, double sigma_m)
+{
+  if (!std::isfinite(residual_m) || !std::isfinite(sigma_m) ||
+      sigma_m <= 0.0)
+    return std::numeric_limits<double>::infinity();
+  return residual_m / sigma_m;
+}
+
+inline bool rtkResidualPassesGate(double residual_m, double sigma_m,
+                                  double maximum_absolute_normalized_residual)
+{
+  if (!std::isfinite(maximum_absolute_normalized_residual) ||
+      maximum_absolute_normalized_residual <= 0.0)
+    return false;
+  return std::abs(rtkStandardizedResidual(residual_m, sigma_m)) <=
+         maximum_absolute_normalized_residual;
+}
+
 // Combine two single-differenced carrier measurements while retaining a unit
 // geometry coefficient.  The input variances are assumed independent.
 inline RtkLaneCombination rtkLaneCombination(

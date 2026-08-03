@@ -447,6 +447,18 @@ TEST(RtkNoiseModel, RejectsInvalidUncertaintyInputs)
       1.0e-5, -1.0e-5, 0.003)));
 }
 
+TEST(RtkResidualScreening, NormalizesAndRejectsCarrierOutliers)
+{
+  EXPECT_NEAR(rtkStandardizedResidual(0.024, 0.008), 3.0, 1.0e-12);
+  EXPECT_TRUE(rtkResidualPassesGate(0.0239, 0.008, 3.0));
+  EXPECT_TRUE(rtkResidualPassesGate(-0.024, 0.008, 3.0));
+  EXPECT_FALSE(rtkResidualPassesGate(0.0241, 0.008, 3.0));
+  EXPECT_FALSE(rtkResidualPassesGate(-0.0241, 0.008, 3.0));
+  EXPECT_FALSE(rtkResidualPassesGate(0.01, 0.0, 3.0));
+  EXPECT_FALSE(rtkResidualPassesGate(
+      std::numeric_limits<double>::quiet_NaN(), 0.01, 3.0));
+}
+
 TEST(LambdaAmbiguityResolver, FindsKnownCorrelatedSolutionAndOrdersCandidates)
 {
   Eigen::Vector3d floating(5.08, -3.04, 12.06);

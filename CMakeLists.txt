@@ -109,11 +109,11 @@ catkin_package(
 )
 
 add_executable(ligo_mapping src/laserMapping.cpp src/LaserMappingVisualization.cpp
+                src/NoLidarMode.cpp
                 src/LaserMappingRosInterface.cpp
                 include/Urbannav_process/handler.cpp
                 src/li_initialization.cpp src/parameters.cpp src/preprocess.cpp src/Estimator.cpp 
-                src/IMU_Processing.cpp src/GNSS_Processing_fg.cpp src/BaseStationData.cpp src/LambdaAmbiguityResolver.cpp src/GNSS_Initialization.cpp src/GNSS_Assignment.cpp
-                src/NMEA_Processing_fg.cpp src/NMEA_Assignment.cpp)
+                src/IMU_Processing.cpp src/GNSS_Processing_fg.cpp src/BaseStationData.cpp src/LambdaAmbiguityResolver.cpp src/GNSS_Initialization.cpp src/GNSS_Assignment.cpp)
 target_link_libraries(ligo_mapping ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${CERES_LIBRARIES} ${OpenCV_LIBS} ${PYTHON_LIBRARIES} ceres gtsam ${ZIP_LIBRARY})
 target_link_libraries(ligo_mapping
 		dw
@@ -164,5 +164,13 @@ if(CATKIN_ENABLE_TESTING)
                                ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_link_libraries(test_laser_mapping_visualization
                           ${catkin_LIBRARIES} gtsam)
+  endif()
+  catkin_add_gtest(test_no_lidar_mode
+                   test/test_no_lidar_mode.cpp
+                   src/NoLidarMode.cpp)
+  if(TARGET test_no_lidar_mode)
+    target_include_directories(test_no_lidar_mode PRIVATE
+                               ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(test_no_lidar_mode ${catkin_LIBRARIES})
   endif()
 endif()

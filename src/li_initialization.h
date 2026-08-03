@@ -82,7 +82,7 @@ void standard_pcl_cbk(const sensor_msgs::PointCloud2::ConstPtr &msg);
 void livox_pcl_cbk(const livox_ros_driver::CustomMsg::ConstPtr &msg); 
 void imu_cbk(const sensor_msgs::Imu::ConstPtr &msg_in); 
 // void LI_Init_set();
-bool sync_packages(MeasureGroup &meas, queue<std::vector<ObsPtr>> &gnss_msg, queue<nav_msgs::OdometryPtr> &nmea_msg);
+bool sync_packages(MeasureGroup &meas, queue<std::vector<ObsPtr>> &gnss_msg);
 
 // bool sync_packages_nmea(MeasureGroup &meas, queue<nav_msgs::Odometry> &nmea_msg);
 void nmea_meas_callback(const nav_msgs::OdometryConstPtr &meas_msg);

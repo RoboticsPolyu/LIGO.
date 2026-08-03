@@ -52,7 +52,7 @@ gnss:
     cp_weight: 10 
     # Float RTK: base epochs must use the same GPST seconds as rover observations.
     use_double_differences: true
-    use_dd_pseudorange: false      # add primary-band code DD factors
+    use_dd_pseudorange: true      # add primary-band code DD factors
     use_dd_carrier: true                # add carrier DD factors and ambiguities
     use_secondary: true                # GPS L2, Galileo E5b, BeiDou B2
     use_l5: true                       # add GPS L5/Galileo E5a/BeiDou B2a carrier DD factors
@@ -78,6 +78,9 @@ gnss:
     lambda_min_lock_epochs: 5
     lambda_ratio_threshold: 3.0
     lambda_max_std_cycles: 0.3
+    # Reject a complete DD target satellite from LAMBDA when any current
+    # carrier factor exceeds this absolute normalized residual.
+    lambda_max_normalized_residual: 5.0
     fixed_ambiguity_sigma_cycles: 0.001
     # Structured [RTK-DD], [RTK-FLOAT], and [RTK-LAMBDA] runtime diagnostics.
     rtk_debug: true

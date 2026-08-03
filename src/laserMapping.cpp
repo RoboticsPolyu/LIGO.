@@ -52,6 +52,7 @@
 #include "chi-square.h"
 #include "LaserMappingVisualization.h"
 #include "LaserMappingRosInterface.h"
+#include "NoLidarMode.h"
 // #include <ros/console.h>
 
 // This translation unit is the top-level orchestration layer for LIGO mapping.
@@ -173,6 +174,11 @@ void publish_init_map(const ros::Publisher & pubLaserCloudFullRes)
     pubLaserCloudFullRes.publish(laserCloudmsg);
 }
 
+double currentMappingOutputTime()
+{
+    return mappingOutputTime(nolidar, time_current, lidar_end_time);
+}
+
 PointCloudXYZI::Ptr pcl_wait_pub(new PointCloudXYZI(500000, 1));
 PointCloudXYZI::Ptr pcl_wait_save(new PointCloudXYZI());
 
@@ -200,7 +206,7 @@ void publish_frame_world(const ros::Publisher & pubLaserCloudFullRes)
         sensor_msgs::PointCloud2 laserCloudmsg;
         pcl::toROSMsg(*laserCloudWorld, laserCloudmsg);
 
-        laserCloudmsg.header.stamp = ros::Time().fromSec(lidar_end_time); // (map_time); //
+        laserCloudmsg.header.stamp = ros::Time().fromSec(currentMappingOutputTime());
         laserCloudmsg.header.frame_id = "camera_init";
         pubLaserCloudFullRes.publish(laserCloudmsg);
         // publish_count -= PUBFRAME_PERIOD;
@@ -253,7 +259,7 @@ void publish_frame_body(const ros::Publisher & pubLaserCloudFull_body)
 
     sensor_msgs::PointCloud2 laserCloudmsg;
     pcl::toROSMsg(*laserCloudIMUBody, laserCloudmsg);
-    laserCloudmsg.header.stamp = ros::Time().fromSec(lidar_end_time);
+    laserCloudmsg.header.stamp = ros::Time().fromSec(currentMappingOutputTime());
     laserCloudmsg.header.frame_id = "body";
     pubLaserCloudFull_body.publish(laserCloudmsg);
 }
@@ -278,15 +284,18 @@ void set_posestamp(T & out)
 // timestamp policy follows publish_odometry_without_downsample.
 void publish_odometry(const ros::Publisher & pubOdomAftMapped)
 {
-    odomAftMapped.header.frame_id = "camera_init";
-    odomAftMapped.child_frame_id = "aft_mapped";
+    // The no-LiDAR factor graph estimates position directly in ECEF. Do not
+    // label that state as the local LiDAR initialization frame.
+    odomAftMapped.header.frame_id = nolidar ? "earth" : "camera_init";
+    odomAftMapped.child_frame_id = nolidar ? "imu" : "aft_mapped";
     if (publish_odometry_without_downsample)
     {
         odomAftMapped.header.stamp = ros::Time().fromSec(time_current);
     }
     else
     {
-        odomAftMapped.header.stamp = ros::Time().fromSec(lidar_end_time);
+        odomAftMapped.header.stamp =
+            ros::Time().fromSec(currentMappingOutputTime());
     }
     set_posestamp(odomAftMapped.pose.pose);
 
@@ -303,7 +312,9 @@ void publish_odometry(const ros::Publisher & pubOdomAftMapped)
     q.setY(odomAftMapped.pose.pose.orientation.y);
     q.setZ(odomAftMapped.pose.pose.orientation.z);
     transform.setRotation( q );
-    br.sendTransform( tf::StampedTransform( transform, odomAftMapped.header.stamp, "camera_init", "aft_mapped" ) );
+    br.sendTransform(tf::StampedTransform(
+        transform, odomAftMapped.header.stamp,
+        odomAftMapped.header.frame_id, odomAftMapped.child_frame_id));
 }
 
 // Append the latest filter pose to the complete path and publish it.
@@ -311,8 +322,8 @@ void publish_path(const ros::Publisher pubPath)
 {
     set_posestamp(msg_body_pose.pose);
     // msg_body_pose.header.stamp = ros::Time::now();
-    msg_body_pose.header.stamp = ros::Time().fromSec(lidar_end_time);
-    msg_body_pose.header.frame_id = "camera_init";
+    msg_body_pose.header.stamp = ros::Time().fromSec(currentMappingOutputTime());
+    msg_body_pose.header.frame_id = nolidar ? "earth" : "camera_init";
     static int jjj = 0;
     jjj++;
     // if (jjj % 2 == 0) // if path is too large, the rvis will crash
@@ -380,6 +391,18 @@ void initializeFirstScan()
 void preprocessCurrentScan()
 {
     p_imu->Process(Measures, feats_undistort);
+    if (nolidar)
+    {
+        // Explicitly detach from any previous LiDAR cloud and make the branch
+        // invariant visible to the rest of the mapping loop.
+        feats_undistort->clear();
+        feats_down_body = feats_down_body_space;
+        feats_down_body->clear();
+        feats_down_world->clear();
+        time_seq.clear();
+        feats_down_size = 0;
+        return;
+    }
     if (space_down_sample)
     {
         downSizeFilterSurf.setInputCloud(feats_undistort);
@@ -466,7 +489,7 @@ int runLaserMappingApplication(int argc, char** argv)
     ivox_last_ = std::make_shared<IVoxType>(ivox_options_); //(*ivox_);
 
     path.header.stamp    = ros::Time().fromSec(lidar_end_time);
-    path.header.frame_id ="camera_init";
+    path.header.frame_id = nolidar ? "earth" : "camera_init";
 
     // Running timing statistics are maintained only for diagnostic logging.
     int frame_num = 0;
@@ -517,7 +540,7 @@ int runLaserMappingApplication(int argc, char** argv)
     PPPfromTXT(LOCAL_FILE_DIR(ppp_fname), ppp_sol, ppp_ecef);
 
     #endif
-
+        
     // Short aliases keep the numerical loop readable while ownership remains
     // explicit in ros_interface.
     const ros::Publisher &pubLaserCloudFullRes = ros_interface.registered_cloud;
@@ -539,8 +562,8 @@ int runLaserMappingApplication(int argc, char** argv)
         if (flg_exit) break;
         ros::spinOnce();
         // sync_packages returns only when a processable LiDAR/IMU time window
-        // (plus any GNSS/NMEA observations in that window) is available.
-        if(sync_packages(Measures, p_gnss->gnss_msg, p_nmea->nmea_msg))
+        // (plus any GNSS observations in that window) is available.
+        if(sync_packages(Measures, p_gnss->gnss_msg))
         {
             if (flg_reset)
             {
@@ -1167,9 +1190,13 @@ int runLaserMappingApplication(int argc, char** argv)
                                 break;
                             }
                         }
-                        if (p_gnss->gnss_msg.empty()) break;
-                    while ((time_current > time2sec(gnss_cur[0]->time) - time_diff_gnss_local) && (time2sec(gnss_cur[0]->time) - time_diff_gnss_local > time_predict_last_const))
-                    {
+                        // An empty queue is not a reason to abandon the IMU
+                        // window. Continue inertial propagation below; otherwise
+                        // the same unconsumed IMU sample is selected forever.
+                        if (!p_gnss->gnss_msg.empty())
+                        {
+                        while ((time_current > time2sec(gnss_cur[0]->time) - time_diff_gnss_local) && (time2sec(gnss_cur[0]->time) - time_diff_gnss_local > time_predict_last_const))
+                        {
                         double dt = time2sec(gnss_cur[0]->time) - time_diff_gnss_local - time_predict_last_const;
                         double dt_cov = time2sec(gnss_cur[0]->time) - time_diff_gnss_local - time_update_last;
 
@@ -1282,18 +1309,10 @@ int runLaserMappingApplication(int argc, char** argv)
                                 // pub_gnss_lla.publish(gnss_lla_msg);
                                 if (nolidar)
                                 {
-                                    // Eigen::Matrix3d R_enu_local_;
-                                    // R_enu_local_ = Eigen::AngleAxisd(p_gnss->yaw_enu_local, Eigen::Vector3d::UnitZ());
-                                    kf_output.x_.pos = p_gnss->p_assign->isamCurrentEstimate.at<gtsam::Vector12>(F(p_gnss->frame_num-1)).segment<3>(0); // p_gnss->anc_ecef - p_gnss->R_ecef_enu * R_enu_local_ * state_const.rot_end * p_gnss->Tex_imu_r;
-                                    kf_output.x_.rot = p_gnss->p_assign->isamCurrentEstimate.at<gtsam::Rot3>(R(p_gnss->frame_num-1)).matrix(); // p_gnss->R_ecef_enu * R_enu_local_ * state_const.rot_end;
-                                    // kf_output.x_.rot.normalize();
-                                    kf_output.x_.vel = p_gnss->p_assign->isamCurrentEstimate.at<gtsam::Vector12>(F(p_gnss->frame_num-1)).segment<3>(3); // p_gnss->R_ecef_enu * R_enu_local_ * state_const.vel_end; // Eigen::Vector3d::Zero(); // R_ecef_enu * state.vel_end;
-                                    kf_output.x_.ba = Eigen::Vector3d::Zero(); // R_ecef_enu * state.vel_end;
-                                    kf_output.x_.bg = Eigen::Vector3d::Zero(); // R_ecef_enu * state.vel_end;
-                                    kf_output.x_.omg = Eigen::Vector3d::Zero(); // R_ecef_enu * state.vel_end;
-                                    kf_output.x_.gravity = p_gnss->R_ecef_enu * kf_output.x_.gravity; // * R_enu_local_
-                                    kf_output.x_.acc = kf_output.x_.rot.transpose() * (-kf_output.x_.gravity); // R_ecef_enu * state.vel_end;.conjugate().normalized()
-
+                                    // GNSS initialization already produced a
+                                    // complete ECEF graph state. Preserve its
+                                    // optimized biases instead of zeroing them.
+                                    p_gnss->exportOptimizedState(kf_output.x_);
                                     kf_output.P_ = MD(24,24)::Identity() * INIT_COV;
                                 }
                             }
@@ -1307,7 +1326,8 @@ int runLaserMappingApplication(int argc, char** argv)
                         {
                             break;
                         }
-                    }
+                        }
+                        }
                     }
 
                     if (flg_reset)
@@ -1373,7 +1393,7 @@ int runLaserMappingApplication(int argc, char** argv)
                     kf_output.x_.pos + kf_output.x_.rot * p_gnss->Tex_imu_r;
                 rtk_satellite_visualizer.publish(
                     rtk_satellite_pub, *p_gnss, gnss_antenna_local,
-                    lidar_end_time);
+                    currentMappingOutputTime());
             }
 
             // Record runtime statistics and trajectory samples when enabled.
@@ -1390,7 +1410,7 @@ int runLaserMappingApplication(int argc, char** argv)
                         {
                             Eigen::Matrix3d R_enu_local_;
                             Eigen::Vector3d pos_r = kf_output.x_.rot * p_gnss->Tex_imu_r + kf_output.x_.pos; // .normalized()
-                            time_frame.push_back(lidar_end_time); //(time_predict_last_const);
+                            time_frame.push_back(currentMappingOutputTime());
                             est_poses.push_back(pos_r);
                         }
                         euler_cur = SO3ToEuler(kf_output.x_.rot);
@@ -1415,7 +1435,6 @@ int runLaserMappingApplication(int argc, char** argv)
         pcd_writer.writeBinary(all_points_dir, *pcl_wait_save);
     }
     {
-        Eigen::Matrix3d enu_rot = ecef2rotation(first_pvt_used);
         for (int i = 0; i < time_frame.size(); i++)
         {
             // Eigen::Vector3d euler_ext = SO3ToEuler(local_rots[i]);

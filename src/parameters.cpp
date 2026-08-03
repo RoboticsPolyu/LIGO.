@@ -78,7 +78,7 @@ shared_ptr<Preprocess> p_pre;
 // shared_ptr<LI_Init> Init_LI;
 shared_ptr<ImuProcess> p_imu;
 shared_ptr<GNSSProcess> p_gnss;
-shared_ptr<NMEAProcess> p_nmea;
+
 double time_update_last = 0.0, time_current = 0.0, time_predict_last_const = 0.0, t_last = 0.0;
 
 std::string gnss_ephem_topic, gnss_glo_ephem_topic, gnss_meas_topic, gnss_iono_params_topic;
@@ -114,7 +114,7 @@ void readParameters(ros::NodeHandle &nh)
 //   Init_LI.reset(new LI_Init());
   p_imu.reset(new ImuProcess());
   p_gnss.reset(new GNSSProcess());
-  p_nmea.reset(new NMEAProcess());
+
   nh.param<bool>("prop_at_freq_of_imu", prop_at_freq_of_imu, 1);
   nh.param<bool>("check_satu", check_satu, 1);
   nh.param<int>("init_map_size", init_map_size, 100);
@@ -215,6 +215,8 @@ void readParameters(ros::NodeHandle &nh)
         nh.param<int>("gnss/lambda_min_lock_epochs", p_gnss->lambda_min_lock_epochs, 10);
         nh.param<double>("gnss/lambda_ratio_threshold", p_gnss->lambda_ratio_threshold, 3.0);
         nh.param<double>("gnss/lambda_max_std_cycles", p_gnss->lambda_max_std_cycles, 0.25);
+        nh.param<double>("gnss/lambda_max_normalized_residual",
+                         p_gnss->lambda_max_normalized_residual, 3.0);
         nh.param<double>("gnss/fixed_ambiguity_sigma_cycles", p_gnss->fixed_ambiguity_sigma_cycles, 0.001);
         nh.param<bool>("gnss/rtk_debug", p_gnss->rtk_debug, true);
         nh.param<int>("gnss/rtk_debug_epoch_interval", p_gnss->rtk_debug_epoch_interval, 10);
@@ -274,7 +276,17 @@ void readParameters(ros::NodeHandle &nh)
         nh.param<double>("gnss/outlier_thres",p_gnss->p_assign->outlier_thres, 0.1);
         nh.param<double>("gnss/outlier_thres_init",p_gnss->p_assign->outlier_thres_init, 0.1);
         nh.param<double>("gnss/gnss_sample_period",p_gnss->gnss_sample_period, 0.1);
-        nh.param<bool>("gnss/nolidar",nolidar, false); // not ready yet. only for information. when this value is true, ligo becomes a system fusing only IMU and GNSS
+        nh.param<bool>("gnss/nolidar",nolidar, false);
+        if (nolidar && !imu_en)
+        {
+            ROS_WARN("gnss/nolidar requires IMU input; forcing mapping/imu_en=true");
+            imu_en = true;
+        }
+        if (nolidar && lidar_time_inte <= 0.0)
+        {
+            ROS_WARN("mapping/lidar_time_inte must be positive in GNSS+IMU mode; using 0.1 s");
+            lidar_time_inte = 0.1;
+        }
         nh.param<bool>("gnss/ephem_from_rinex",p_gnss->p_assign->ephem_from_rinex, false);
         nh.param<bool>("gnss/obs_from_rinex",p_gnss->p_assign->obs_from_rinex, false);
         nh.param<bool>("gnss/pvt_is_gt",p_gnss->p_assign->pvt_is_gt, false);
@@ -348,31 +360,6 @@ void cout_state_to_file(Eigen::Vector3d &pos_lla)
         }
         // local_poses.push_back(kf_output.x_.pos);
         // local_rots.push_back(kf_output.x_.rot);
-        est_poses.push_back(pos_enu);
-        time_frame.push_back(time_predict_last_const);
-    }
-}
-
-void cout_state_to_file_nmea()
-{
-    {
-        Eigen::Vector3d pos_enu;
-        if (!nolidar)
-        {
-            Eigen::Vector3d truth_imu;
-            truth_imu << 0.0, 0.0, 0.14; // 0.0, 0.02, -0.43; // 
-            // Eigen::Vector3d pos_r = kf_output.x_.rot * p_nmea->Tex_imu_r + kf_output.x_.pos; // maybe improper.normalized()
-            Eigen::Vector3d pos_r = kf_output.x_.rot * truth_imu + kf_output.x_.pos; // maybe improper.normalized()
-            Eigen::Matrix3d enu_rot = p_nmea->p_assign->isamCurrentEstimate.at<gtsam::Rot3>(P(0)).matrix();
-            Eigen::Vector3d anc_cur = p_nmea->p_assign->isamCurrentEstimate.at<gtsam::Vector3>(E(0));
-            pos_enu = enu_rot * pos_r + anc_cur;
-        }
-        else
-        {
-            pos_enu = kf_output.x_.rot * p_nmea->Tex_imu_r + kf_output.x_.pos; // .normalized()
-        }
-        local_poses.push_back(kf_output.x_.pos);
-        local_rots.push_back(kf_output.x_.rot);
         est_poses.push_back(pos_enu);
         time_frame.push_back(time_predict_last_const);
     }

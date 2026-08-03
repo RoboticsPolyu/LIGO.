@@ -35,6 +35,7 @@
  */
 
 #include "li_initialization.h"
+#include "NoLidarMode.h"
 bool data_accum_finished = false, data_accum_start = false, online_calib_finish = false, refine_print = false;
 int frame_num_init = 0;
 double time_lag_IMU_wtr_lidar = 0.0, move_start_time = 0.0, online_calib_starts_time = 0.0; //, mean_acc_norm = 9.81;
@@ -336,164 +337,100 @@ void imu_cbk(const sensor_msgs::Imu::ConstPtr &msg_in)
     // sig_buffer.notify_all();
 }
 
-bool sync_packages(MeasureGroup &meas, queue<std::vector<ObsPtr>> &gnss_msg, queue<nav_msgs::OdometryPtr> &nmea_msg)
+bool sync_packages(MeasureGroup &meas, queue<std::vector<ObsPtr>> &gnss_msg)
 {
     if (nolidar)
     {
-        if (is_first_gnss)
+        // In GNSS+IMU-only mode, IMU data is the processing clock. Do not wait
+        // for a future GNSS epoch: this keeps inertial propagation alive during
+        // GNSS gaps and avoids making the system depend on a LiDAR timestamp.
+        // Once initialization is complete, enforce strict timestamp progress at
+        // the synchronization boundary. This also recovers safely if a consumer
+        // returned before removing the final sample of its previous window.
+        if (!p_imu->imu_need_init_)
         {
-            if (gnss_meas_buf.empty())
+            while (!imu_deque.empty() &&
+                   imu_deque.front()->header.stamp.toSec() <= time_current)
             {
-                // imu_pushed = false;
-                return false;
+                imu_last = *imu_deque.front();
+                imu_deque.pop_front();
             }
-            else
-            {
-                // double imu_time = imu_deque.front()->header.stamp.toSec();
-                // double front_gnss_ts = time2sec(gnss_meas_buf.front()[0]->time); // take time
-                // if (last_timestamp_imu < front_gnss_ts - time_diff_gnss_local)
-                // {
-                    // return false;
-                // }
-                // while (front_gnss_ts - imu_time > time_diff_gnss_local) // wrong
-                // {
-                    // imu_last = *(imu_deque.front());
-                    // imu_deque.pop_front();
-                    // if(imu_deque.empty()) break;
-                    // imu_time = imu_deque.front()->header.stamp.toSec(); // can be changed
-                    // imu_next = *(imu_deque.front());
-                // }
-                // else
-                while (!imu_deque.empty())
-                {
-                    imu_deque.pop_front();
-                }
-                {
-                    is_first_gnss = false;
-                }
-            }
+            if (!imu_deque.empty()) imu_next = *imu_deque.front();
         }
+        if (imu_deque.empty()) return false;
 
-
-        if (imu_deque.empty())
-        {
-            return false;
-        }
-        
-        imu_first_time = imu_deque.front()->header.stamp.toSec(); // 
-
-        if (latest_gnss_time < time_diff_gnss_local + imu_first_time + lidar_time_inte)
+        NoLidarWindow window;
+        if (!makeNoLidarWindow(imu_deque.front()->header.stamp.toSec(),
+                               imu_deque.back()->header.stamp.toSec(),
+                               lidar_time_inte, window))
         {
             return false;
         }
 
-        if (last_timestamp_imu < imu_first_time + lidar_time_inte)
+        // GNSS and IMU callbacks can be delivered in either order for the same
+        // timestamp. Hold a recent IMU window briefly when its matching GNSS
+        // epoch has not arrived yet; otherwise that epoch reaches the next
+        // window and is incorrectly discarded as stale. The newest buffered
+        // IMU timestamp provides a data-time timeout, so a genuine GNSS outage
+        // delays propagation only for a bounded interval.
+        if (is_first_gnss && gnss_meas_buf.empty()) return false;
+        if (latest_gnss_time > 0.0)
         {
-            return false;
-        }
-
-        if (imu_deque.empty())
-        {
-            cout << "could not be here" << endl;
-            return false;
-        }
-
-        if (!imu_pushed)
-        { 
-            double imu_time = imu_deque.front()->header.stamp.toSec();
-            // imu_first_time = imu_time;
-
-            double imu_last_time = imu_deque.back()->header.stamp.toSec();
-            if (imu_last_time - imu_first_time < lidar_time_inte)
+            const double latest_gnss_local =
+                latest_gnss_time - time_diff_gnss_local;
+            const double maximum_gnss_wait =
+                std::max(1.0, 3.0 * p_gnss->gnss_sample_period);
+            if (latest_gnss_local < window.end_time &&
+                last_timestamp_imu - latest_gnss_local <= maximum_gnss_wait)
             {
                 return false;
             }
-            /*** push imu data, and pop from imu buffer ***/
-            if (p_imu->imu_need_init_)
-            {
-                imu_next = *(imu_deque.front());
-                meas.imu.shrink_to_fit();
-                while (imu_time - imu_first_time < lidar_time_inte)
-                {
-                    meas.imu.emplace_back(imu_deque.front());
-                    imu_last = imu_next;
-                    imu_deque.pop_front();
-                    if(imu_deque.empty()) break;
-                    imu_time = imu_deque.front()->header.stamp.toSec(); // can be changed
-                    imu_next = *(imu_deque.front());
-                }
-                if (!gnss_meas_buf.empty())
-                {
-                    double front_gnss_ts = time2sec(gnss_meas_buf.front()[0]->time); // take time
-                    while (front_gnss_ts < imu_first_time + lidar_time_inte + time_diff_gnss_local)
-                    {
-                        gnss_meas_buf.pop();
-                        if(gnss_meas_buf.empty()) break;
-                        front_gnss_ts = time2sec(gnss_meas_buf.front()[0]->time); // take time
-                    }
-                    if (meas.imu.empty())
-                    {
-                        return false;
-                    }
-                }
-                if (!nmea_meas_buf.empty())
-                {
-                    double front_nmea_ts = nmea_meas_buf.front()->header.stamp.toSec(); // take time
-                    while (front_nmea_ts < imu_first_time + lidar_time_inte + time_diff_nmea_local)
-                    {
-                        nmea_meas_buf.pop();
-                        if(nmea_meas_buf.empty()) break;
-                        front_nmea_ts = nmea_meas_buf.front()->header.stamp.toSec(); // take time
-                    }
-                    if (meas.imu.empty())
-                    {
-                        return false;
-                    }
-                }
-            }
-            imu_pushed = true;
         }
 
+        imu_first_time = window.begin_time;
+        meas.lidar_beg_time = window.begin_time;
+        meas.lidar_last_time = window.end_time;
+        lidar_end_time = window.end_time;
+        meas.lidar->clear();
+        meas.imu.clear();
+
+        // ImuProcess consumes batches only during gravity/bias initialization.
+        // Afterwards the mapping loop consumes the shared deque sample by sample.
+        if (p_imu->imu_need_init_)
         {
-            if (!gnss_meas_buf.empty()) // or can wait for a short time?
+            imu_next = *imu_deque.front();
+            while (!imu_deque.empty() &&
+                   imu_deque.front()->header.stamp.toSec() < window.end_time)
             {
-                // double back_gnss_ts = time2sec(gnss_meas_buf.back()[0]->time);
-                
-                // if (back_gnss_ts - imu_first_time < time_diff_gnss_local + lidar_time_inte)
-                // {
-                //     return false;
-                // }
-                double front_gnss_ts = time2sec(gnss_meas_buf.front()[0]->time); // take time
-                while (front_gnss_ts - imu_first_time < time_diff_gnss_local + lidar_time_inte) 
-                {
-                    gnss_msg.push(gnss_meas_buf.front());
-                    gnss_meas_buf.pop();
-                    if (gnss_meas_buf.empty()) break;
-                    front_gnss_ts = time2sec(gnss_meas_buf.front()[0]->time);
-                }
-
-                if (!gnss_msg.empty())
-                {
-                    imu_pushed = false;
-                    return true;
-                }
+                meas.imu.emplace_back(imu_deque.front());
+                imu_last = *imu_deque.front();
+                imu_deque.pop_front();
             }
-
-            // if (gnss_meas_buf.empty())
-            // {
-            //     wait_num ++;
-            //     if (wait_num > 2) 
-            //     {
-            //         wait_num = 0;
-            //     }
-            //     else
-            //     {
-            //         return false;
-            //     }
-            // }
+            if (imu_deque.empty()) return false;
+            imu_next = *imu_deque.front();
         }
 
-        imu_pushed = false;
+        // Transfer every GNSS epoch whose local-clock timestamp is covered by
+        // this IMU window. The consumer discards epochs older than its state.
+        while (!gnss_meas_buf.empty())
+        {
+            if (gnss_meas_buf.front().empty())
+            {
+                ROS_WARN("Discarding an empty GNSS observation epoch");
+                gnss_meas_buf.pop();
+                continue;
+            }
+            const double gnss_time = time2sec(gnss_meas_buf.front()[0]->time);
+            if (!gnssBelongsToNoLidarWindow(
+                    gnss_time, time_diff_gnss_local, window))
+            {
+                break;
+            }
+            gnss_msg.push(gnss_meas_buf.front());
+            gnss_meas_buf.pop();
+            is_first_gnss = false;
+        }
+
         return true;
     }
     else
