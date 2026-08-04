@@ -203,20 +203,20 @@ void readParameters(ros::NodeHandle &nh)
         nh.param<double>("gnss/base_carrier_std_cycles", p_gnss->base_carrier_std_cycles, 0.01);
         // Prefer the adaptive-noise floor parameter. The legacy fixed-sigma
         // name remains a compatibility fallback and is interpreted as a floor.
-        if (!nh.getParam("gnss/double_difference_sigma_floor",
-                         p_gnss->double_difference_sigma_floor))
-          nh.param<double>("gnss/double_difference_sigma",
-                           p_gnss->double_difference_sigma_floor, 0.003);
-        nh.param<double>("gnss/double_difference_pseudorange_sigma",
-                         p_gnss->double_difference_pseudorange_sigma, 2.0);
+        if (!nh.getParam("gnss/double_difference_sigma_floor", p_gnss->double_difference_sigma_floor))
+          nh.param<double>("gnss/double_difference_sigma", p_gnss->double_difference_sigma_floor, 0.003);
+        nh.param<double>("gnss/double_difference_pseudorange_sigma", p_gnss->double_difference_pseudorange_sigma, 2.0);
         nh.param<double>("gnss/ambiguity_prior_sigma", p_gnss->ambiguity_prior_sigma, 100.0);
         nh.param<bool>("gnss/enable_integer_fixing", p_gnss->enable_integer_fixing, true);
         nh.param<int>("gnss/lambda_min_ambiguities", p_gnss->lambda_min_ambiguities, 4);
         nh.param<int>("gnss/lambda_min_lock_epochs", p_gnss->lambda_min_lock_epochs, 10);
         nh.param<double>("gnss/lambda_ratio_threshold", p_gnss->lambda_ratio_threshold, 3.0);
         nh.param<double>("gnss/lambda_max_std_cycles", p_gnss->lambda_max_std_cycles, 0.25);
-        nh.param<double>("gnss/lambda_max_normalized_residual",
-                         p_gnss->lambda_max_normalized_residual, 3.0);
+        nh.param<double>("gnss/lambda_max_normalized_residual", p_gnss->lambda_max_normalized_residual, 3.0);
+        nh.param<double>("gnss/lambda_min_fix_fraction", p_gnss->lambda_min_fix_fraction, 0.7);
+        nh.param<double>("gnss/lambda_postfix_cost_tolerance", p_gnss->lambda_postfix_cost_tolerance, 0.01);
+        nh.param<bool>("gnss/enable_geometry_free_slip", p_gnss->enable_geometry_free_slip, false);
+        nh.param<double>("gnss/rtk_geometry_free_slip_threshold", p_gnss->rtk_geometry_free_slip_threshold, 0.05);
         nh.param<double>("gnss/fixed_ambiguity_sigma_cycles", p_gnss->fixed_ambiguity_sigma_cycles, 0.001);
         nh.param<bool>("gnss/rtk_debug", p_gnss->rtk_debug, true);
         nh.param<int>("gnss/rtk_debug_epoch_interval", p_gnss->rtk_debug_epoch_interval, 10);

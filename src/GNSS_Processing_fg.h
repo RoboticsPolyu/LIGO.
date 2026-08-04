@@ -205,6 +205,13 @@ class GNSSProcess
   double lambda_max_std_cycles = 0.25;
   // Innovation gate applied to current DD carrier factors before LAMBDA.
   double lambda_max_normalized_residual = 3.0;
+  // GICI-style PAR must retain this fraction of the original lane group.
+  double lambda_min_fix_fraction = 0.7;
+  // Maximum allowed increase of current normalized DD cost before commit.
+  double lambda_postfix_cost_tolerance = 0.01;
+  // Optional dual-frequency rover-minus-base geometry-free slip detector.
+  bool enable_geometry_free_slip = false;
+  double rtk_geometry_free_slip_threshold = 0.05;
   double fixed_ambiguity_sigma_cycles = 0.001;
   bool integer_solution_available = false;
   double last_lambda_ratio = 0.0;
@@ -252,7 +259,7 @@ class GNSSProcess
         const std::vector<ObsPtr> &valid_observations,
         const std::vector<EphemBasePtr> &valid_ephemerides,
         const state_output &state);
-    /// Add raw-frequency and supplementary wide-/narrow-lane carrier DD factors.
+    /// Add each raw-frequency carrier DD measurement exactly once.
     void addDoubleDifferenceFactors(const std::vector<ObsPtr> &observations,
                                     const std::vector<EphemBasePtr> &ephemerides,
                                     const Eigen::Matrix3d &rover_rotation,
@@ -274,12 +281,24 @@ class GNSSProcess
       double latest_measured = 0.0;
       double latest_geometry = 0.0;
       double latest_sigma_m = 0.0;
+      double latest_elevation = 0.0;
       gtsam::NoiseModelFactor::shared_ptr latest_factor;
     };
     BaseStationData base_station_data_;
     // (reference satellite, subject satellite, RtkSignalBand value).
     using AmbiguityId = std::tuple<uint32_t, uint32_t, uint8_t>;
     std::map<AmbiguityId, AmbiguityState> ambiguities_;
+    struct WideLaneFixState
+    {
+      gtsam::Key primary_key = 0;
+      gtsam::Key secondary_key = 0;
+      long long integer = 0;
+    };
+    // Pair-level constraints are separate from raw ambiguity fix flags.
+    using WideLaneId = std::pair<uint32_t, uint32_t>;
+    std::map<WideLaneId, WideLaneFixState> wide_lane_fixes_;
+    // satellite -> (last timestamp, last primary-secondary SD phase in metres)
+    std::map<uint32_t, std::pair<double, double>> geometry_free_history_;
     // Keep one reference satellite per constellation/band until it disappears.
     std::map<std::pair<uint32_t, uint8_t>, uint32_t> reference_satellites_;
     size_t next_ambiguity_id_ = 0;

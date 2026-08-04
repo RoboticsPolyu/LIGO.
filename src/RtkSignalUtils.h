@@ -9,6 +9,11 @@
 
 #include <cmath>
 #include <cstdint>
+#include <limits>
+#include <map>
+#include <queue>
+#include <set>
+#include <tuple>
 #include <vector>
 
 enum class RtkSignalBand : uint8_t
@@ -22,6 +27,116 @@ enum class RtkSignalBand : uint8_t
   WideLane = 9,
   NarrowLane = 10
 };
+
+// GICI-style cascade order. Long-wavelength combinations are constrained
+// first; their graph priors then sharpen the shorter-wavelength states.
+inline int rtkAmbiguityCascadeStage(RtkSignalBand band)
+{
+  if (band == RtkSignalBand::WideLane) return 3;
+  if (band == RtkSignalBand::Primary || band == RtkSignalBand::Secondary ||
+      band == RtkSignalBand::L5 || band == RtkSignalBand::Extra ||
+      band == RtkSignalBand::Wide)
+    return 2;
+  if (band == RtkSignalBand::NarrowLane) return 1;
+  return 0;
+}
+
+enum class RtkPartialFixDeletionMethod
+{
+  Elevation,
+  Variance,
+  Fractional
+};
+
+inline size_t rtkPartialFixWorstIndex(
+    const Eigen::VectorXd &floating_cycles,
+    const Eigen::VectorXd &variance_cycles2,
+    const Eigen::VectorXd &elevation_radians,
+    RtkPartialFixDeletionMethod method)
+{
+  size_t worst = 0;
+  double worst_score = -std::numeric_limits<double>::infinity();
+  for (Eigen::Index index = 0; index < floating_cycles.size(); ++index)
+  {
+    double score = 0.0;
+    if (method == RtkPartialFixDeletionMethod::Elevation)
+      score = -elevation_radians[index];
+    else if (method == RtkPartialFixDeletionMethod::Variance)
+      score = variance_cycles2[index];
+    else
+      score = std::abs(floating_cycles[index] -
+                       std::round(floating_cycles[index]));
+    if (!std::isfinite(score)) score = std::numeric_limits<double>::infinity();
+    if (score > worst_score)
+    {
+      worst_score = score;
+      worst = static_cast<size_t>(index);
+    }
+  }
+  return worst;
+}
+
+inline size_t rtkMinimumPartialFixSize(size_t candidate_count,
+                                       size_t absolute_minimum,
+                                       double minimum_fraction)
+{
+  if (!std::isfinite(minimum_fraction)) minimum_fraction = 1.0;
+  minimum_fraction = std::max(0.0, std::min(1.0, minimum_fraction));
+  return std::max(absolute_minimum, static_cast<size_t>(
+      std::ceil(minimum_fraction * static_cast<double>(candidate_count))));
+}
+
+inline bool rtkPostFixCostPasses(double float_cost, double fixed_cost,
+                                 double tolerance)
+{
+  return std::isfinite(float_cost) && std::isfinite(fixed_cost) &&
+         std::isfinite(tolerance) && tolerance >= 0.0 &&
+         fixed_cost <= float_cost + tolerance;
+}
+
+struct RtkFixedAmbiguityEdge
+{
+  uint32_t reference = 0;
+  uint32_t satellite = 0;
+  long long integer_cycles = 0;  // N_satellite - N_reference
+};
+
+// Equivalent to GICI findMatch, generalized to a short path of fixed DD
+// edges. Reversing an edge reverses its coefficient.
+inline bool rtkFindHistoricalMatch(
+    uint32_t reference, uint32_t satellite,
+    const std::vector<RtkFixedAmbiguityEdge> &history,
+    long long *integer_cycles)
+{
+  if (!integer_cycles || reference == satellite) return false;
+  std::map<uint32_t, std::vector<std::pair<uint32_t, long long>>> graph;
+  for (const auto &edge : history)
+  {
+    graph[edge.reference].push_back({edge.satellite, edge.integer_cycles});
+    graph[edge.satellite].push_back({edge.reference, -edge.integer_cycles});
+  }
+  std::queue<std::pair<uint32_t, long long>> pending;
+  std::set<uint32_t> visited;
+  pending.push({reference, 0});
+  visited.insert(reference);
+  while (!pending.empty())
+  {
+    const auto current = pending.front();
+    pending.pop();
+    for (const auto &next : graph[current.first])
+    {
+      if (!visited.insert(next.first).second) continue;
+      const long long value = current.second + next.second;
+      if (next.first == satellite)
+      {
+        *integer_cycles = value;
+        return true;
+      }
+      pending.push({next.first, value});
+    }
+  }
+  return false;
+}
 
 constexpr double kRtkFrequencyToleranceHz = 1.0e5;
 
@@ -173,6 +288,18 @@ inline bool rtkArcIsContinuous(double previous_timestamp,
 {
   return previous_timestamp > 0.0 && current_timestamp >= previous_timestamp &&
          current_timestamp - previous_timestamp <= gap_tolerance_seconds;
+}
+
+inline bool rtkGeometryFreeCycleSlip(bool enabled,
+                                     double previous_geometry_free_m,
+                                     double current_geometry_free_m,
+                                     double threshold_m)
+{
+  return enabled && std::isfinite(previous_geometry_free_m) &&
+         std::isfinite(current_geometry_free_m) &&
+         std::isfinite(threshold_m) && threshold_m > 0.0 &&
+         std::abs(current_geometry_free_m - previous_geometry_free_m) >
+             threshold_m;
 }
 
 // Convert the receiver and base carrier-phase uncertainties to the variance

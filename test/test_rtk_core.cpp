@@ -2,6 +2,7 @@
 #include "RtkSignalUtils.h"
 #include "gnss_factor/gnss_double_diff_carrier_factor.hpp"
 #include "gnss_factor/gnss_double_diff_pseudorange_factor.hpp"
+#include "gnss_factor/wide_lane_integer_factor.hpp"
 
 #include <gtest/gtest.h>
 #include <gtsam/inference/Symbol.h>
@@ -305,6 +306,50 @@ TEST(RtkSignalSelection, FormsWideAndNarrowLaneCombinations)
   EXPECT_GT(wide.variance_m2, narrow.variance_m2);
 }
 
+TEST(RtkWideLane, BinaryConstraintUsesRawAmbiguitiesInCycles)
+{
+  const double lambda1 = 0.190293672798;
+  const double lambda2 = 0.244210213425;
+  ligo::WideLaneIntegerFactor factor(
+      gtsam::Symbol('n', 1), gtsam::Symbol('n', 2), lambda1, lambda2, 7,
+      gtsam::noiseModel::Isotropic::Sigma(1, 0.001));
+  gtsam::Matrix H1, H2;
+  const gtsam::Vector error = factor.evaluateError(
+      gtsam::Vector1(12.25 * lambda1), gtsam::Vector1(5.25 * lambda2),
+      &H1, &H2);
+  ASSERT_EQ(error.size(), 1);
+  EXPECT_NEAR(error[0], 0.0, 1.0e-12);
+  EXPECT_NEAR(H1(0, 0), 1.0 / lambda1, 1.0e-12);
+  EXPECT_NEAR(H2(0, 0), -1.0 / lambda2, 1.0e-12);
+}
+
+TEST(RtkWideLane, PropagatesCorrelatedRawCovarianceWithTQt)
+{
+  const double lambda1 = 0.19;
+  const double lambda2 = 0.24;
+  Eigen::Matrix4d raw_covariance;
+  raw_covariance <<
+      0.010, 0.003, 0.002, 0.001,
+      0.003, 0.020, 0.004, 0.002,
+      0.002, 0.004, 0.030, 0.006,
+      0.001, 0.002, 0.006, 0.040;
+  Eigen::Matrix<double, 2, 4> transform =
+      Eigen::Matrix<double, 2, 4>::Zero();
+  transform(0, 0) = 1.0 / lambda1;
+  transform(0, 1) = -1.0 / lambda2;
+  transform(1, 2) = 1.0 / lambda1;
+  transform(1, 3) = -1.0 / lambda2;
+  const Eigen::Matrix2d wide_covariance =
+      transform * raw_covariance * transform.transpose();
+  const double expected_variance0 =
+      raw_covariance(0, 0) / (lambda1 * lambda1) +
+      raw_covariance(1, 1) / (lambda2 * lambda2) -
+      2.0 * raw_covariance(0, 1) / (lambda1 * lambda2);
+  EXPECT_NEAR(wide_covariance(0, 0), expected_variance0, 1.0e-12);
+  EXPECT_NE(wide_covariance(0, 1), 0.0);
+  EXPECT_TRUE(wide_covariance.isApprox(wide_covariance.transpose()));
+}
+
 TEST(RtkSignalSelection, MapsGalileoAndBeiDouSecondaryBands)
 {
   auto galileo = std::make_shared<gnss_comm::Obs>();
@@ -422,6 +467,15 @@ TEST(RtkArcValidation, UsesIndependentBaseEpochGapTolerance)
   EXPECT_FALSE(rtkArcIsContinuous(0.0, 1.0, 1.5));
 }
 
+TEST(RtkArcValidation, GeometryFreeSlipHonorsEnableSwitch)
+{
+  EXPECT_FALSE(rtkGeometryFreeCycleSlip(false, 1.20, 1.40, 0.05));
+  EXPECT_FALSE(rtkGeometryFreeCycleSlip(true, 1.20, 1.24, 0.05));
+  EXPECT_TRUE(rtkGeometryFreeCycleSlip(true, 1.20, 1.251, 0.05));
+  EXPECT_FALSE(rtkGeometryFreeCycleSlip(
+      true, std::numeric_limits<double>::quiet_NaN(), 1.3, 0.05));
+}
+
 TEST(RtkNoiseModel, PropagatesAllFourCarrierUncertainties)
 {
   const double satellite_variance = rtkSingleDifferenceVarianceMeters2(
@@ -529,6 +583,61 @@ TEST(LambdaAmbiguityResolver, RejectsInvalidCovariancesAndDimensions)
   EXPECT_FALSE(LambdaAmbiguityResolver::solve(floating, asymmetric).valid);
   EXPECT_FALSE(LambdaAmbiguityResolver::solve(
       floating, Eigen::Matrix3d::Identity()).valid);
+}
+
+TEST(RtkAmbiguityCascade, OrdersWideRawAndNarrowLanes)
+{
+  EXPECT_GT(rtkAmbiguityCascadeStage(RtkSignalBand::WideLane),
+            rtkAmbiguityCascadeStage(RtkSignalBand::Primary));
+  EXPECT_GT(rtkAmbiguityCascadeStage(RtkSignalBand::Primary),
+            rtkAmbiguityCascadeStage(RtkSignalBand::NarrowLane));
+}
+
+TEST(RtkPartialAmbiguityResolution, SupportsAllGiciDeletionCriteria)
+{
+  Eigen::Vector3d floating(2.05, 4.49, -1.20);
+  Eigen::Vector3d variances(0.01, 0.09, 0.04);
+  Eigen::Vector3d elevations(0.8, 0.6, 0.2);
+  EXPECT_EQ(rtkPartialFixWorstIndex(
+                floating, variances, elevations,
+                RtkPartialFixDeletionMethod::Elevation),
+            2U);
+  EXPECT_EQ(rtkPartialFixWorstIndex(
+                floating, variances, elevations,
+                RtkPartialFixDeletionMethod::Variance),
+            1U);
+  EXPECT_EQ(rtkPartialFixWorstIndex(
+                floating, variances, elevations,
+                RtkPartialFixDeletionMethod::Fractional),
+            1U);
+}
+
+TEST(RtkPartialAmbiguityResolution, EnforcesMinimumFixPercentage)
+{
+  EXPECT_EQ(rtkMinimumPartialFixSize(10, 4, 0.7), 7U);
+  EXPECT_EQ(rtkMinimumPartialFixSize(5, 4, 0.2), 4U);
+  EXPECT_EQ(rtkMinimumPartialFixSize(5, 2, 1.5), 5U);
+}
+
+TEST(RtkFixConfirmation, RejectsPostFixCostIncrease)
+{
+  EXPECT_TRUE(rtkPostFixCostPasses(12.0, 12.01, 0.01));
+  EXPECT_FALSE(rtkPostFixCostPasses(12.0, 12.011, 0.01));
+  EXPECT_FALSE(rtkPostFixCostPasses(
+      12.0, std::numeric_limits<double>::quiet_NaN(), 0.01));
+}
+
+TEST(RtkHistoricalMatch, PreservesIntegerAcrossReferenceChange)
+{
+  const std::vector<RtkFixedAmbiguityEdge> history = {
+      {1, 3, 17},  // N3-N1
+      {1, 2, 5}};  // N2-N1
+  long long matched = 0;
+  ASSERT_TRUE(rtkFindHistoricalMatch(2, 3, history, &matched));
+  EXPECT_EQ(matched, 12);  // (N3-N1) - (N2-N1)
+  ASSERT_TRUE(rtkFindHistoricalMatch(3, 2, history, &matched));
+  EXPECT_EQ(matched, -12);
+  EXPECT_FALSE(rtkFindHistoricalMatch(4, 3, history, &matched));
 }
 
 TEST(RtkSatelliteVisualization, ConvertsEcefLineOfSightToLocalFrame)

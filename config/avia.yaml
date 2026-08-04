@@ -78,9 +78,17 @@ gnss:
     lambda_min_lock_epochs: 5
     lambda_ratio_threshold: 3.0
     lambda_max_std_cycles: 0.3
+
+    lambda_min_fix_fraction: 0.3
+    lambda_postfix_cost_tolerance: 0.1
+
+    # Optional dual-frequency geometry-free cycle-slip detector.
+    enable_geometry_free_slip: false
+    rtk_geometry_free_slip_threshold: 0.1
+
     # Reject a complete DD target satellite from LAMBDA when any current
     # carrier factor exceeds this absolute normalized residual.
-    lambda_max_normalized_residual: 5.0
+    lambda_max_normalized_residual: 100.0
     fixed_ambiguity_sigma_cycles: 0.001
     # Structured [RTK-DD], [RTK-FLOAT], and [RTK-LAMBDA] runtime diagnostics.
     rtk_debug: true
@@ -117,10 +125,10 @@ gnss:
     local_trigger_info_topic: "/external_trigger"       # external trigger info of the local sensor, if `gnss_local_online_sync` is true
     gnss_local_time_diff: 18.0 # 27.062                 # difference between GNSS and local time (s), if `gnss_local_online_sync` is false
     gnss_iono_default_parameters: [0.1118E-07,  0.2235E-07, -0.4172E-06,  0.6557E-06, 0.1249E+06, -0.4424E+06,  0.1507E+07, -0.2621E+06]
-    gnss_extrinsic_T: [0.011, 0.03155, 0.02365] # h360 [-0.39765, 0.13204, 0.0284] # m300 [0.0055, 0.03626, 0.02212] #m360 
-    gnss_extrinsic_R: [ 1, 0, 0,
-                    0, 1, 0,
-                    0, 0, 1 ]            # extrinsics of the GNSS receiver to IMU represented in IMU frame
+    extrinsic_T: [-0.031229, -0.027003,  0.073821] # mid360[0.04165, 0.02326, -0.0284] # avia # 
+    extrinsic_R: [ 0.999949,  0.004235,  0.009223, 
+                  -0.004146,  0.999945, -0.009596, 
+                  -0.009263,  0.009558,  0.999911] # extrinsics of LiDAR to IMU represented in IMU frame
 
 nmea:
     nmea_enable: false # enable fuse ppp results of gnss observations
