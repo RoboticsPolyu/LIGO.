@@ -1,5 +1,6 @@
-Data/2026-Aug-02_001813/
+Data/**
 Dataset/**
 .DS_Store
 .vscode/
 paper/**
+Log/**

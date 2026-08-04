@@ -2084,7 +2084,12 @@ bool GNSSProcess::attemptIntegerAmbiguityResolution(double timestamp)
         trial_isam.update(wide_fix_graph, gtsam::Values());
         trial_isam.update();
         (void)trial_isam.calculateEstimate();
-        p_assign->isam.update(wide_fix_graph, gtsam::Values());
+        const gtsam::ISAM2Result wide_fix_update =
+            p_assign->isam.update(wide_fix_graph, gtsam::Values());
+        if (!wide_fix_update.newFactorsIndices.empty())
+          id_accumulate = std::max(
+              id_accumulate,
+              wide_fix_update.newFactorsIndices.back() + size_t{1});
         p_assign->isam.update();
         p_assign->isamCurrentEstimate = p_assign->isam.calculateEstimate();
         for (size_t index = 0; index < wide_pairs.size(); ++index)
@@ -2388,7 +2393,11 @@ bool GNSSProcess::attemptIntegerAmbiguityResolution(double timestamp)
       }
       // Fix-and-hold: commit integer priors and immediately recalculate the
       // navigation estimate before Evaluate() exports it.
-      p_assign->isam.update(p_assign->gtSAMgraph, gtsam::Values());
+      const gtsam::ISAM2Result fix_update =
+          p_assign->isam.update(p_assign->gtSAMgraph, gtsam::Values());
+      if (!fix_update.newFactorsIndices.empty())
+        id_accumulate = std::max(
+            id_accumulate, fix_update.newFactorsIndices.back() + size_t{1});
       p_assign->gtSAMgraph.resize(0);
       p_assign->isam.update();
       p_assign->isamCurrentEstimate = p_assign->isam.calculateEstimate();

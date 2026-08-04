@@ -32,10 +32,10 @@ mapping:
     gravity: [0.0, 0.0, -9.81] # 
     init_with_imu: true
     gravity_init: [0.0, 9.810, 0.0] # preknown gravity in IMU frame. used when it is impossible to estimate it from acc measurements, i.e., init_with_imu is false
-    extrinsic_T: [-0.011, -0.02329, 0.04412] # mid360[0.04165, 0.02326, -0.0284] # avia # 
-    extrinsic_R: [1.0, 0.0, 0.0,
-                    0.0, 1.0, 0.0,
-                    0.0, 0.0, 1.0] # extrinsics of LiDAR to IMU represented in IMU frame
+    extrinsic_T: [-0.031229, -0.027003,  0.073821] # mid360[0.04165, 0.02326, -0.0284] # avia # 
+    extrinsic_R: [ 0.999949,  0.004235,  0.009223, 
+                       -0.004146,  0.999945, -0.009596, 
+                       -0.009263,  0.009558,  0.999911] # extrinsics of LiDAR to IMU represented in IMU frame
 
 gnss:
     # Full mapping mode. Keep this explicit so a previous GNSS/IMU-only
@@ -75,15 +75,20 @@ gnss:
     # This dataset normally has three stable integer-compatible DD arcs after
     # elevation filtering; covariance and ratio gates still protect the fix.
     lambda_min_ambiguities: 3
-    lambda_min_lock_epochs: 5
+    # The minimum number of epochs to hold a fixed ambiguity before releasing it.
+    lambda_min_lock_epochs: 10
+    # The minimum ratio of the best to second-best integer solution.
     lambda_ratio_threshold: 3.0
+    # The maximum normalized standard deviation of the fixed integer solution.
     lambda_max_std_cycles: 0.3
-
+    # The minimum fraction of ambiguities that must be fixed to accept a solution.
     lambda_min_fix_fraction: 0.3
+    # The maximum fraction of ambiguities that can be fixed to accept a solution.
     lambda_postfix_cost_tolerance: 0.1
 
     # Optional dual-frequency geometry-free cycle-slip detector.
-    enable_geometry_free_slip: false
+    enable_geometry_free_slip: true
+    # The maximum absolute geometry-free residual to accept a carrier-phase factor.
     rtk_geometry_free_slip_threshold: 0.1
 
     # Reject a complete DD target satellite from LAMBDA when any current
@@ -92,6 +97,7 @@ gnss:
     fixed_ambiguity_sigma_cycles: 0.001
     # Structured [RTK-DD], [RTK-FLOAT], and [RTK-LAMBDA] runtime diagnostics.
     rtk_debug: true
+    # The number of epochs to accumulate before publishing the RTK debug message.
     rtk_debug_epoch_interval: 10
     # RViz equivalent sky view: retain true LOS direction at a local radius.
     rtk_satellite_visualization: true
@@ -108,7 +114,7 @@ gnss:
     gnss_dopp_std_thres: 30.0           # doppler std threshold
     gnss_cp_std_thres: 30.0             # carrier phase std threshold
     gnss_cp_time_thres: 100.0           # single-differenced carrier phase factor time threshold
-    gtsam_variable_thres: 3000            # the window size for GNSS obs
+    gtsam_variable_thres: 500            # the window size for GNSS obs
     gtsam_marg_variable_thres: 1
     gnss_sample_period: 0.1             # = 1 / frequency of GNSS obs
     outlier_thres: 1 # 1                # parameter for robust function of GNSS factors
@@ -125,22 +131,10 @@ gnss:
     local_trigger_info_topic: "/external_trigger"       # external trigger info of the local sensor, if `gnss_local_online_sync` is true
     gnss_local_time_diff: 18.0 # 27.062                 # difference between GNSS and local time (s), if `gnss_local_online_sync` is false
     gnss_iono_default_parameters: [0.1118E-07,  0.2235E-07, -0.4172E-06,  0.6557E-06, 0.1249E+06, -0.4424E+06,  0.1507E+07, -0.2621E+06]
-    extrinsic_T: [-0.031229, -0.027003,  0.073821] # mid360[0.04165, 0.02326, -0.0284] # avia # 
-    extrinsic_R: [ 0.999949,  0.004235,  0.009223, 
-                  -0.004146,  0.999945, -0.009596, 
-                  -0.009263,  0.009558,  0.999911] # extrinsics of LiDAR to IMU represented in IMU frame
-
-nmea:
-    nmea_enable: false # enable fuse ppp results of gnss observations
-    posit_odo_topic: "/ublox_driver/receiver_lla" # "/mavros/local_position/odom" # ppp solutions topic
-    ppp_std_thres: 1000.0 # ppp solution std thred
-    pos_noise: 1 # factor cov for position factors
-    nmea_weight: 1000.0 
-    nmea_local_time_diff: 18.0 # 27.062 # difference between PPP solution and local time (s)
-    ppp_file_name: "deg2.pos" # "deg2.pos" # ""
-    ppp_anc: [3959058.559396, -87615.730649, 4983325.235812] # logo 
-             # [-2152900.934855,4380649.467661,4091851.462459] # bri 
-             # [-2169505.899002,4385241.855870,4078231.236204] # out  
+    gnss_extrinsic_T: [-0.17, 0.0, -0.10]                  # h360 [-0.39765, 0.13204, 0.0284] # m300 [0.0055, 0.03626, 0.02212] #m360 
+    gnss_extrinsic_R: [ 1, 0, 0,
+                                0, 1, 0,
+                                0, 0, 1 ]                       # extrinsics of the GNSS receiver to IMU represented in IMU frame
 
 odometry: 
     publish_odometry_without_downsample: false # true: publish odometry results in local world frame at point sampling frequency
