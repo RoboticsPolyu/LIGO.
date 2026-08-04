@@ -53,6 +53,8 @@
 #include "LaserMappingVisualization.h"
 #include "LaserMappingRosInterface.h"
 #include "NoLidarMode.h"
+#include "RtkSolutionStatus.h"
+#include <ligo/RtkSolutionStatus.h>
 // #include <ros/console.h>
 
 // This translation unit is the top-level orchestration layer for LIGO mapping.
@@ -282,7 +284,8 @@ void set_posestamp(T & out)
 
 // Publish both ROS odometry and the matching map-to-body TF transform. The
 // timestamp policy follows publish_odometry_without_downsample.
-void publish_odometry(const ros::Publisher & pubOdomAftMapped)
+void publish_odometry(const ros::Publisher &pubOdomAftMapped,
+                      const ros::Publisher &pubRtkSolutionStatus)
 {
     // The no-LiDAR factor graph estimates position directly in ECEF. Do not
     // label that state as the local LiDAR initialization frame.
@@ -300,6 +303,25 @@ void publish_odometry(const ros::Publisher & pubOdomAftMapped)
     set_posestamp(odomAftMapped.pose.pose);
 
     pubOdomAftMapped.publish(odomAftMapped);
+
+    // Publish an explicit companion status instead of overloading Odometry's
+    // covariance or frame fields. Both messages share the same timestamp.
+    const RtkSolutionType solution_type = classifyRtkSolution(
+        p_gnss->rtk_float_ambiguity_count,
+        p_gnss->rtk_fixed_ambiguity_count);
+    ligo::RtkSolutionStatus status;
+    status.header = odomAftMapped.header;
+    status.solution_type = static_cast<uint8_t>(solution_type);
+    status.solution_name = rtkSolutionTypeName(solution_type);
+    status.detail_status = p_gnss->rtk_fix_status;
+    status.active_float = static_cast<uint32_t>(
+        p_gnss->rtk_float_ambiguity_count);
+    status.active_fixed = static_cast<uint32_t>(
+        p_gnss->rtk_fixed_ambiguity_count);
+    status.integer_solution_available =
+        solution_type == RtkSolutionType::Fixed;
+    status.lambda_ratio = p_gnss->last_lambda_ratio;
+    pubRtkSolutionStatus.publish(status);
 
     static tf::TransformBroadcaster br;
     tf::Transform                   transform;
@@ -549,6 +571,8 @@ int runLaserMappingApplication(int argc, char** argv)
     const ros::Publisher &pubLaserCloudEffect = ros_interface.effective_cloud;
     const ros::Publisher &pubLaserCloudMap = ros_interface.laser_map;
     const ros::Publisher &pubOdomAftMapped = ros_interface.mapped_odometry;
+    const ros::Publisher &pubRtkSolutionStatus =
+        ros_interface.rtk_solution_status;
     const ros::Publisher &pubPath = ros_interface.path;
     const ros::Publisher &plane_pub = ros_interface.plane_marker;
     const ros::Publisher &rtk_satellite_pub = ros_interface.rtk_satellites;
@@ -1061,7 +1085,8 @@ int runLaserMappingApplication(int argc, char** argv)
                     {
                         /******* Publish odometry *******/
 
-                        publish_odometry(pubOdomAftMapped);
+                        publish_odometry(pubOdomAftMapped,
+                                         pubRtkSolutionStatus);
                         if (runtime_pos_log)
                         {
                             euler_cur = SO3ToEuler(kf_output.x_.rot);
@@ -1373,7 +1398,8 @@ int runLaserMappingApplication(int argc, char** argv)
             // In scan-rate mode, publish odometry after all point corrections.
             if (!publish_odometry_without_downsample)
             {
-                publish_odometry(pubOdomAftMapped);
+                publish_odometry(pubOdomAftMapped,
+                                 pubRtkSolutionStatus);
             }
 
             // Insert the registered scan only after the final state correction.

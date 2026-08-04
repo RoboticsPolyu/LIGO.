@@ -23,6 +23,7 @@ class LaserMappingRosInterface
   ros::Publisher effective_cloud;
   ros::Publisher laser_map;
   ros::Publisher mapped_odometry;
+  ros::Publisher rtk_solution_status;
   ros::Publisher path;
   ros::Publisher plane_marker;
   ros::Publisher rtk_satellites;

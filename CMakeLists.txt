@@ -95,11 +95,13 @@ link_directories(
 add_message_files(
   FILES
   LocalSensorExternalTrigger.msg
+  RtkSolutionStatus.msg
 )
 
 generate_messages(
  DEPENDENCIES
  geometry_msgs
+ std_msgs
 )
 
 catkin_package(
@@ -114,6 +116,8 @@ add_executable(ligo_mapping src/laserMapping.cpp src/LaserMappingVisualization.c
                 include/Urbannav_process/handler.cpp
                 src/li_initialization.cpp src/parameters.cpp src/preprocess.cpp src/Estimator.cpp 
                 src/IMU_Processing.cpp src/GNSS_Processing_fg.cpp src/BaseStationData.cpp src/LambdaAmbiguityResolver.cpp src/GNSS_Initialization.cpp src/GNSS_Assignment.cpp)
+add_dependencies(ligo_mapping ${${PROJECT_NAME}_EXPORTED_TARGETS}
+                              ${catkin_EXPORTED_TARGETS})
 target_link_libraries(ligo_mapping ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${CERES_LIBRARIES} ${OpenCV_LIBS} ${PYTHON_LIBRARIES} ceres gtsam ${ZIP_LIBRARY})
 target_link_libraries(ligo_mapping
 		dw

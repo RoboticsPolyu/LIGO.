@@ -4,6 +4,8 @@
 #include "parameters.h"
 #include "Urbannav_process/handler.h"
 
+#include <ligo/RtkSolutionStatus.h>
+
 #include <nav_msgs/Odometry.h>
 #include <nav_msgs/Path.h>
 #include <sensor_msgs/PointCloud2.h>
@@ -103,6 +105,8 @@ void LaserMappingRosInterface::configurePublishers(ros::NodeHandle &node)
   laser_map = node.advertise<sensor_msgs::PointCloud2>("/Laser_map", 1000);
   mapped_odometry = node.advertise<nav_msgs::Odometry>(
       "/aft_mapped_to_init", 1000);
+  rtk_solution_status = node.advertise<ligo::RtkSolutionStatus>(
+      "/rtk_solution_status", 1000);
   path = node.advertise<nav_msgs::Path>("/path", 1000);
   plane_marker = node.advertise<visualization_msgs::Marker>(
       "/planner_normal", 1000);

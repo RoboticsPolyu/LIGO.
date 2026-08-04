@@ -1,5 +1,6 @@
 #include "LambdaAmbiguityResolver.h"
 #include "RtkSignalUtils.h"
+#include "RtkSolutionStatus.h"
 #include "gnss_factor/gnss_double_diff_carrier_factor.hpp"
 #include "gnss_factor/gnss_double_diff_pseudorange_factor.hpp"
 #include "gnss_factor/wide_lane_integer_factor.hpp"
@@ -511,6 +512,18 @@ TEST(RtkResidualScreening, NormalizesAndRejectsCarrierOutliers)
   EXPECT_FALSE(rtkResidualPassesGate(0.01, 0.0, 3.0));
   EXPECT_FALSE(rtkResidualPassesGate(
       std::numeric_limits<double>::quiet_NaN(), 0.01, 3.0));
+}
+
+TEST(RtkSolutionStatus, ClassifiesNoAmbiguityFloatAndFixedStates)
+{
+  EXPECT_EQ(classifyRtkSolution(0, 0), RtkSolutionType::NoAmbiguity);
+  EXPECT_STREQ(rtkSolutionTypeName(classifyRtkSolution(0, 0)),
+               "NO_AMBIGUITY");
+  EXPECT_EQ(classifyRtkSolution(4, 0), RtkSolutionType::Float);
+  EXPECT_STREQ(rtkSolutionTypeName(classifyRtkSolution(4, 0)), "FLOAT");
+  EXPECT_EQ(classifyRtkSolution(0, 3), RtkSolutionType::Fixed);
+  EXPECT_EQ(classifyRtkSolution(5, 3), RtkSolutionType::Fixed);
+  EXPECT_STREQ(rtkSolutionTypeName(classifyRtkSolution(5, 3)), "FIXED");
 }
 
 TEST(LambdaAmbiguityResolver, FindsKnownCorrelatedSolutionAndOrdersCandidates)
