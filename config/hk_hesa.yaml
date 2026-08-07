@@ -1,0 +1,157 @@
+common:
+    lid_topic:  "/lidar_points" 
+    imu_topic:  "/imu/data" 
+    con_frame: false # true: if you need to combine several LiDAR frames into one
+    con_frame_num: 1 # the number of frames combined
+    scan_rate: 10 # number of scaned circles (360 degree) in one second
+
+preprocess:
+    lidar_type: 4
+    scan_line: 32 
+    timestamp_unit: 0      # the unit of time/t field in the PointCloud2 rostopic: 0-second, 1-milisecond, 2-microsecond, 3-nanosecond.
+    blind: 2.0             # near bline area
+    det_range: 200        # distance range
+
+mapping:
+    imu_en: true
+    imu_time_inte: 0.0025 # = 1 / frequency of IMU
+    lidar_time_inte: 0.1 # = 1 / frequency of LiDAR
+    satu_acc: 30.0 # the saturation value of IMU's acceleration. not related to the units
+    satu_gyro: 35 # the saturation value of IMU's angular velocity. not related to the units
+    acc_norm: 9.81 # 1.0 for g as unit, 9.81 for m/s^2 as unit of the IMU's acceleration
+    lidar_meas_cov: 0.01 # 0.001; 0.01
+    acc_cov_output: 500
+    gyr_cov_output: 1000 
+    b_acc_cov: 0.0001 
+    b_gyr_cov: 0.0001 
+    imu_meas_acc_cov: 0.1 
+    imu_meas_omg_cov: 0.1 # 0.01
+    plane_thr: 0.1 # 0.05, the threshold for plane criteria, the smaller, the flatter a plane
+    match_s: 81 # parameter for matching check, the larger, the harder to manifest a match
+    ivox_grid_resolution: 2.0 # length (m) of voxels for grid map
+    gravity: [0.0, 0.0, -9.81] # 
+    init_with_imu: true
+    gravity_init: [0.0, 0.0, -9.81] # preknown gravity in IMU frame. used when it is impossible to estimate it from acc measurements, i.e., init_with_imu is false
+    extrinsic_T: [-0.051132,  0.761474, -0.025824] # mid360[0.04165, 0.02326, -0.0284] # avia # 
+    extrinsic_R: [-0.999540,  0.025906, -0.015800,
+                       -0.029882, -0.930881,  0.364098,
+                       -0.005275,  0.364402,  0.931227] # extrinsics of LiDAR to IMU represented in IMU frame
+
+gnss:
+    # Full mapping mode. Keep this explicit so a previous GNSS/IMU-only
+    # roslaunch cannot leave a stale private parameter in a reused ROS master.
+    nolidar: false
+    ephem_from_rinex: false            # true: read ephem from rinex. false: get ephem from rosbag
+    ephem_file_name: " "
+    obs_from_rinex: false              # true: read gnss obs (e.g., pseudo range, doppler, carrier-phase) from rinex. false: get obs from rosbag
+    pvt_is_gt: true            # true: the rtk (ground truth) is solved online and saved in /ublox_driver/receiver_pvt topic. false: read rtk from local file  
+    gt_file_name: " "
+    gt_file_type: 1                      # 1: livox, 2: urban, 3: m2dgr
+    outlier_rejection: true            # true: use robust function for gnss factors
+    psr_dopp_weight: 1 # 10
+    cp_weight: 10 
+    # Float RTK: base epochs must use the same GPST seconds as rover observations.
+    use_double_differences: true
+    use_dd_pseudorange: true      # add primary-band code DD factors
+    use_dd_carrier: true                # add carrier DD factors and ambiguities
+    use_secondary: true                # GPS L2, Galileo E5b, BeiDou B2
+    use_l5: true                       # add GPS L5/Galileo E5a/BeiDou B2a carrier DD factors
+    # RINEX 3.02 file, ZIP archive, or directory. This directory contains two
+    # consecutive HKSC hourly observation archives.
+    base_station_file: "2026-Aug-06_152527" # initial state 1778228555.00 2417.00000 462173.00 22.3599077278 114.106184359        5.191     -2410321.112  5386780.356  2411319.313       0.002  -0.001   0.002  -0.729   0.053   0.424  -0.6403777389   1.2497183540 129.5567525392 1    -0.002     0.002    -0.001     0.001     0.003    -0.000
+    # base_station_file: "2026-Aug-06_191735" # small_loop.bag
+    base_epoch_tolerance: 0.05
+    # Base RINEX is 1 Hz; keep this independent of 10 Hz rover GNSS period.
+    rtk_ambiguity_gap_tolerance: 5
+    # RINEX LLI/SSI fields do not provide carrier standard deviation.
+    base_carrier_std_cycles: 0.01
+    # DD noise is computed from all four carrier-phase uncertainties; this
+    # value is only a residual atmosphere/multipath modelling floor [m].
+    double_difference_sigma_floor: 0.01 # 0.003
+    double_difference_pseudorange_sigma: 2.0 # primary-band code DD sigma [m]
+    ambiguity_prior_sigma: 100.0
+    # LAMBDA partial ambiguity resolution and fix-and-hold constraints.
+    enable_integer_fixing: false
+    # This dataset normally has three stable integer-compatible DD arcs after
+    # elevation filtering; covariance and ratio gates still protect the fix.
+    lambda_min_ambiguities: 3
+    # The minimum number of epochs to hold a fixed ambiguity before releasing it.
+    lambda_min_lock_epochs: 10
+    # The minimum ratio of the best to second-best integer solution.
+    lambda_ratio_threshold: 3.0
+    # The maximum normalized standard deviation of the fixed integer solution.
+    lambda_max_std_cycles: 0.3
+    # The minimum fraction of ambiguities that must be fixed to accept a solution.
+    lambda_min_fix_fraction: 0.3
+    # The maximum fraction of ambiguities that can be fixed to accept a solution.
+    lambda_postfix_cost_tolerance: 0.1
+
+    # Optional dual-frequency geometry-free cycle-slip detector.
+    enable_geometry_free_slip: true
+    # The maximum absolute geometry-free residual to accept a carrier-phase factor.
+    rtk_geometry_free_slip_threshold: 0.1
+    # GICI-style dual-frequency Melbourne-Wubbena detector. Unlike GF, this
+    # also detects equal-cycle slips occurring on both frequencies.
+    enable_melbourne_wubbena_slip: true
+    rtk_melbourne_wubbena_slip_threshold: 2.0
+
+    # Reject a complete DD target satellite from LAMBDA when any current
+    # carrier factor exceeds this absolute normalized residual.
+    lambda_max_normalized_residual: 100.0
+    fixed_ambiguity_sigma_cycles: 0.001
+    # Structured [RTK-DD], [RTK-FLOAT], and [RTK-LAMBDA] runtime diagnostics.
+    rtk_debug: true
+    # The number of epochs to accumulate before publishing the RTK debug message.
+    rtk_debug_epoch_interval: 10
+    # RViz equivalent sky view: retain true LOS direction at a local radius.
+    rtk_satellite_visualization: true
+    rtk_satellite_display_radius: 50.0
+    gnss_meas_topic: "/ublox_driver/range_meas"           # GNSS raw measurement topic
+    gnss_ephem_topic: "/ublox_driver/ephem"               # GPS, Galileo, BeiDou ephemeris
+    gnss_glo_ephem_topic: "/ublox_driver/glo_ephem"       # GLONASS ephemeris
+    gnss_iono_params_topic: "/ublox_driver/iono_params"   # GNSS broadcast ionospheric parameters
+    gnss_tp_info_topic: "/ublox_driver/time_pulse_info"   # PPS time info
+    rtk_pvt_topic: "/ublox_driver/receiver_pvt"           # gnss pvt soln msg
+    rtk_lla_topic: "/ublox_driver/receiver_lla"           # nav sat fix
+    gnss_elevation_thres: 30            # satellite elevation threshold (degree) 30
+    gnss_psr_std_thres: 30.0            # pseudo-range std threshold
+    gnss_dopp_std_thres: 30.0           # doppler std threshold
+    gnss_cp_std_thres: 30.0             # carrier phase std threshold
+    gnss_cp_time_thres: 100.0           # single-differenced carrier phase factor time threshold
+    gtsam_variable_thres: 500            # the window size for GNSS obs
+    gtsam_marg_variable_thres: 1
+    gnss_sample_period: 1.0             # bag /range_meas is 1 Hz (1448 epochs / 1447 s)
+    outlier_thres: 1 # 1                # parameter for robust function of GNSS factors
+    outlier_thres_init: 10 # 10         # parameter for robust fucntion of initial GNSS factors
+    window_size: 10 # <= 10             # window size of GNSS observations used for intialization
+    prior_noise: 1000 # 100             # factor cov for initial factors
+    marg_noise: 0.1                     # factor cov for marginalized factors
+    odo_noise: 0.1 # 0.1 10                # factor cov for LiDAR-Inertial factors
+    grav_noise: 0.1 # 0.1 0.5           # factor cov for gravity factors
+    psr_dopp_noise: 1.0                # factor cov for pseudo-range factors
+    cp_noise: 0.1                       # factor cov for carrier-phase factors
+    gnss_ekf_noise: 0.01 # 0.1          # measurement cov for gnss in ekf of front-end
+    gnss_local_online_sync: false                       # if perform online synchronization betwen GNSS and local time
+    local_trigger_info_topic: "/external_trigger"       # external trigger info of the local sensor, if `gnss_local_online_sync` is true
+    gnss_local_time_diff: 18.0 # 27.062                 # difference between GNSS and local time (s), if `gnss_local_online_sync` is false
+    gnss_iono_default_parameters: [0.1118E-07,  0.2235E-07, -0.4172E-06,  0.6557E-06, 0.1249E+06, -0.4424E+06,  0.1507E+07, -0.2621E+06]
+    # gnss_extrinsic_T: [-0.70, 0.28, -0.15]                  # h360 [-0.39765, 0.13204, 0.0284] # m300 [0.0055, 0.03626, 0.02212] #m360 
+    gnss_extrinsic_T: [0.28, 0.70, -0.15]
+    gnss_extrinsic_R: [ 1, 0, 0,
+                                0, 1, 0,
+                                0, 0, 1 ]                       # extrinsics of the GNSS receiver to IMU represented in IMU frame
+
+odometry: 
+    publish_odometry_without_downsample: false # true: publish odometry results in local world frame at point sampling frequency
+
+publish:
+    path_en: true                 # false: close the path output
+    scan_publish_en: true         # false: close all the point cloud output
+    scan_bodyframe_pub_en: false  # true: output the point cloud scans in IMU-body-frame
+    rviz_downsample_en: true     # true: voxel-filter published clouds only (mapping and PCD saving are unaffected)
+    rviz_downsample_leaf_size: 0.5 # voxel size in metres; increase it to reduce RViz load further
+
+pcd_save:
+    pcd_save_en: false
+    interval: -1                 # how many LiDAR frames saved in each pcd file; 
+                                 # -1 : all frames will be saved in ONE pcd file, may lead to memory crash when having too much frames.
