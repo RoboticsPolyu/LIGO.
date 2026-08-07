@@ -488,7 +488,16 @@ void GNSSProcess::runISAM2opt(void) //
     p_assign->isam.update();
   }
   p_assign->isamCurrentEstimate = p_assign->isam.calculateEstimate();
-  
+
+  if (p_assign->isamCurrentEstimate.exists(E(0)))
+  {
+    const auto anchor = p_assign->isamCurrentEstimate.at<gtsam::Vector3>(E(0));
+    ROS_INFO_STREAM(std::fixed << std::setprecision(7)
+                    << "[Check State] Rover Initial Position E(0) = ["
+                    << anchor.x() << ", "
+                    << anchor.y() << ", "
+                    << anchor.z() << "]");
+  }
   if (nolidar) // || invalid_lidar)
   {
     // Continue IMU integration from the newly optimized accelerometer and
@@ -1462,6 +1471,11 @@ void GNSSProcess::addDoubleDifferenceFactors(
       continue;
     const auto measurement_noise =
         gtsam::noiseModel::Isotropic::Sigma(1, measurement_sigma);
+    
+    auto robustDDNoise = gtsam::noiseModel::Robust::Create(
+        gtsam::noiseModel::mEstimator::Cauchy::Create(3.0 * measurement_sigma), 
+        gtsam::noiseModel::Isotropic::Sigma(1, measurement_sigma)
+    );
 
     const ObsPtr &satellite_obs = observations[satellite.rover_index];
     const ObsPtr &reference_obs = observations[reference.rover_index];
