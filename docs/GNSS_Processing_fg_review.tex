@@ -1,0 +1,470 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=24mm]{geometry}
+\usepackage{amsmath,amssymb,booktabs,array,longtable,xcolor,hyperref}
+\usepackage[T1]{fontenc}
+\hypersetup{colorlinks=true,linkcolor=blue,urlcolor=blue}
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\high}{\textcolor{red!75!black}{\textbf{HIGH}}}
+\newcommand{\medium}{\textcolor{orange!85!black}{\textbf{MEDIUM}}}
+\newcommand{\low}{\textcolor{green!45!black}{\textbf{LOW}}}
+
+\title{Technical Review of \code{GNSS\_Processing\_fg}:\\
+Pipeline, Double-Difference Management, LAMBDA, and Risk Audit}
+\author{Code-level review of the LIGO repository}
+\date{August 2026 source snapshot}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This document describes the GNSS factor-graph pipeline implemented primarily in
+\code{src/GNSS\_Processing\_fg.cpp}.  It concentrates on rover/base
+double-difference (DD) code and carrier factors, ambiguity-arc management,
+wide-lane fixing, raw-ambiguity LAMBDA/PAR, cycle-slip and residual screening,
+and fixed-lag factor deletion.  It also records algorithmic defects and risks
+found by static inspection.  The most serious issues are: (i) DD observations
+sharing a reference satellite are modelled as independent, so ambiguity
+covariance and LAMBDA validation can be overconfident; (ii) committed wide-lane
+and integer-fix factors are not registered with the fixed-lag ownership lists,
+allowing stale ambiguity variables and constraints to accumulate; and (iii) the
+wide-lane constraint is committed before the raw fixing stage and has no
+measurement-cost rollback test.  These are credible false-fix or long-run
+stability risks and should be addressed before treating the FIXED flag as a
+safety-critical integrity statement.
+\end{abstract}
+
+\tableofcontents
+
+\section{Scope and state convention}
+
+The main graph symbols are:
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+Key & Meaning & Mode \\
+\midrule
+$A(k)$ & local position and velocity & LiDAR enabled \\
+$R(k)$ & attitude & both \\
+$O(k)$ & angular rate, acceleration, and IMU biases & LiDAR enabled \\
+$G(k)$ & gravity & LiDAR enabled \\
+$F(k)$ & ECEF position, velocity, accelerometer bias, gyro bias & no LiDAR \\
+$B(k)$ & four constellation receiver-clock biases & both \\
+$C(k)$ & common receiver-clock drift & both \\
+$E(0)$ & ECEF anchor & LiDAR enabled \\
+$P(0)$ & local-to-ECEF rotation & LiDAR enabled \\
+$n(j)$ & one DD carrier ambiguity, stored in metres & RTK DD \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The DD sign convention is target minus reference.  For target satellite $s$,
+reference $r$, rover $u$, and base $b$, the geometric DD is
+\begin{equation}
+g_{sr}=\rho_u^s-\rho_b^s-\rho_u^r+\rho_b^r.
+\end{equation}
+The code factor residual is $g_{sr}-P_{sr}^{DD}$.  The carrier factor residual
+is
+\begin{equation}
+e_{\Phi}=g_{sr}+a_{sr}-\Phi_{sr}^{DD},
+\end{equation}
+where graph variable $a_{sr}$ is in metres.  LAMBDA converts it to cycles using
+$N_{sr}=a_{sr}/\lambda$.
+
+\section{Top-level processing pipeline}
+
+\subsection{Input filtering and initialization}
+
+\code{processGNSS()} passes each rover epoch to
+\code{GNSSAssignment::processGNSSBase()}.  That routine:
+\begin{enumerate}
+  \item accepts GPS, GLONASS, Galileo, and BeiDou only;
+  \item requires a primary-frequency observation and a valid ephemeris;
+  \item rejects observations exceeding configured pseudorange, Doppler, or
+        carrier standard-deviation thresholds;
+  \item maintains satellite tracking and Hatch-smoothed pseudorange state;
+  \item after initialization, applies an elevation mask and an azimuth-bin
+        diversity selection; and
+  \item limits the accepted epoch to at most 15 satellites.
+\end{enumerate}
+
+Before graph initialization, epochs with fewer than four valid satellites are
+discarded.  Valid GNSS epochs and corresponding local pose/velocity samples fill
+an initialization window.  \code{GNSSLIAlign()} estimates the ECEF anchor and
+local-to-ECEF rotation, then \code{SetInit()} creates priors and the first graph
+state.  The initialization has a low-excitation SPP/ENU path and an
+excited-motion trajectory-alignment path.
+
+\subsection{Per-epoch optimization}
+
+After initialization, \code{Evaluate()} performs the following sequence:
+\begin{enumerate}
+  \item construct the current local or ECEF navigation initial estimate;
+  \item call \code{AddFactor()} to add rover pseudorange/Doppler, receiver-clock,
+        motion, LiDAR/IMU, time-differenced carrier, and optional base/rover DD
+        factors;
+  \item run a float iSAM2 update through \code{runISAM2opt()};
+  \item if carrier DD factors were added, call
+        \code{attemptIntegerAmbiguityResolution()};
+  \item export the optimized navigation state; and
+  \item prune legacy time-differenced carrier history.
+\end{enumerate}
+
+This order is conceptually correct: integer validation uses the newly optimized
+float state rather than the pre-optimization state.
+
+\section{Double-difference measurement management}
+
+\subsection{Base synchronization and signal candidates}
+
+\code{addDoubleDifferenceFactors()} first finds the closest base epoch within
+\code{base\_epoch\_tolerance}.  A missing match skips only the DD branch; the
+rover-only graph continues.  For every valid rover satellite and frequency, a
+candidate is retained only if:
+\begin{itemize}
+  \item the frequency maps to a supported raw band (primary, secondary, L5,
+        extra, or wide);
+  \item carrier phase and carrier standard deviation exist and phase is nonzero;
+  \item a base observation matches satellite and frequency within 100 kHz;
+  \item neither rover nor base reports an invalid half-cycle; and
+  \item the propagated single-difference variance is finite.
+\end{itemize}
+
+The single-difference phase and variance are
+\begin{align}
+\Phi_{u-b}^s &= \lambda_u\phi_u^s-\lambda_b\phi_b^s,\\
+\sigma_{u-b,s}^2 &= (\lambda_u\sigma_{\phi,u})^2+
+                    (\lambda_b\sigma_{\phi,b})^2.
+\end{align}
+The carrier DD standard deviation used by each scalar factor is
+\begin{equation}
+\sigma_{DD,sr}=\sqrt{\sigma_{u-b,s}^2+\sigma_{u-b,r}^2+
+                           \sigma_{\mathrm{floor}}^2}.
+\end{equation}
+
+\subsection{Cycle-slip screening}
+
+LLI bit 1 (half-cycle ambiguity) rejects a candidate immediately.  LLI bits 0
+or 1 set the loss-of-lock flag and cause a new ambiguity arc.  An optional
+geometry-free detector forms, for each dual-frequency satellite,
+\begin{equation}
+L_{GF}=(\Phi_1^u-\Phi_1^b)-(\Phi_2^u-\Phi_2^b)
+\end{equation}
+and declares a slip when the epoch-to-epoch jump exceeds
+\code{rtk\_geometry\_free\_slip\_threshold}.  Continuity also requires the
+epoch gap not to exceed \code{rtk\_ambiguity\_gap\_tolerance}.
+
+\subsection{Reference selection}
+
+A reference is selected separately per constellation and raw signal band.  The
+lowest single-difference phase variance is preferred, but the previous reference
+is retained while available to avoid unnecessary ambiguity redefinition.
+Primary and secondary bands are forced to use one common dual-frequency
+reference so that $N_{WL}=N_1-N_2$ is well-defined.  This is a good and necessary
+constraint.  Other bands can retain independent references.
+
+\subsection{DD pseudorange factors}
+
+Primary-band code DD factors reuse the primary carrier reference.  Their base
+Gaussian sigma is \code{double\_difference\_pseudorange\_sigma}.  When
+\code{double\_difference\_pseudorange\_robust\_threshold}>0, a Cauchy kernel is
+applied in whitened residual units.  Carrier DD factors deliberately remain
+Gaussian.  This separation is appropriate because robust carrier weights would
+make covariance-based integer validation harder to interpret.
+
+\subsection{Ambiguity arcs and fix-and-hold}
+
+An arc identity is $(r,s,\mathrm{band})$.  A new key $n(j)$ is created for a new
+identity, a rover/base LLI event, or a discontinuous epoch gap.  Its initial
+value is measured DD minus predicted geometry.  A broad prior uses
+\code{ambiguity\_prior\_sigma}.  Each continuous observation increments a lock
+counter and stores the latest factor, sigma, elevation, measurement, and
+geometry for later screening.
+
+When a reference changes, the code searches a graph of recent fixed DD integer
+edges.  If a path connects the new reference and target, it transfers the
+equivalent integer and initializes the new arc as held.  The graph-theoretic
+sign handling is sensible, but its safety depends completely on old fixed edges
+being correct and truly continuous.
+
+\section{LAMBDA and partial ambiguity resolution}
+
+\subsection{Pre-LAMBDA eligibility gates}
+
+Only active, current-epoch, non-fixed ambiguities are eligible.  Each must:
+\begin{itemize}
+  \item have at least \code{lambda\_min\_lock\_epochs};
+  \item have a nonzero wavelength (the DD pair must be integer-compatible);
+  \item exist in the current iSAM2 estimate; and
+  \item pass the current carrier residual gate.
+\end{itemize}
+The residual gate evaluates the exact latest factor at the float solution and
+rejects the entire target satellite if
+$|e_{\Phi}|/\sigma_{DD}>\code{lambda\_max\_normalized\_residual}$.
+Satellite-wide rejection is conservative when one frequency is bad.
+
+\subsection{Stage 1: wide-lane fixing}
+
+Primary and secondary ambiguities sharing $(r,s)$ are paired.  A linear
+transformation constructs
+\begin{equation}
+N_{WL}=a_1/\lambda_1-a_2/\lambda_2.
+\end{equation}
+The full joint marginal covariance is transformed as $Q_{WL}=TQ_aT^T$, which
+correctly preserves correlations already represented by iSAM2.  LAMBDA returns
+the two best candidates.  The subset must pass a maximum standard-deviation
+gate and the ratio test
+\begin{equation}
+R=\frac{s_2}{\max(s_1,10^{-12})}\geq
+\code{lambda\_ratio\_threshold}.
+\end{equation}
+If it fails, the pair with the largest wide-lane variance is removed until the
+PAR minimum is reached.  Accepted integers are imposed by
+\code{WideLaneIntegerFactor} and immediately committed to iSAM2.
+
+\subsection{Stage 2: raw ambiguity fixing}
+
+After any wide-lane constraint is committed, the covariance is recomputed;
+hence Stage 2 is conditional on the fixed wide lane.  Only primary and secondary
+ambiguities are used, grouped by constellation, and only the largest
+constellation group is attempted.  L5, extra, and wide raw bands are therefore
+float-only in the current Stage 2.
+
+Three PAR deletion orders are attempted independently: lowest elevation,
+largest variance, and largest fractional distance from the nearest integer.
+For every subset, the code:
+\begin{enumerate}
+  \item obtains the joint ambiguity covariance;
+  \item converts mean and covariance from metres to cycles;
+  \item rejects excessive marginal standard deviation;
+  \item runs LAMBDA for two candidates and applies the ratio test;
+  \item adds proposed integer priors to a copy of iSAM2; and
+  \item compares selected current carrier-factor costs before committing.
+\end{enumerate}
+Accepted raw integer priors implement fix-and-hold.
+
+\subsection{Wide lane versus narrow lane}
+
+The implementation has a real wide-lane stage, but it has \emph{no explicit
+narrow-lane observable or narrow-lane integer stage}.  Although
+\code{RtkSignalBand::NarrowLane} and a cascade-stage helper exist, no narrow-lane
+candidate or factor is constructed in this pipeline.  Stage 2 fixes the original
+$N_1$/$N_2$ ambiguities after conditioning on $N_1-N_2$; that is mathematically
+related to resolving the short-wavelength information, but it should not be
+described in logs or documentation as an implemented narrow-lane combination.
+
+\section{Fixed-lag management}
+
+Each normal factor receives an iSAM2 factor index tracked in
+\code{factor\_id\_frame}.  When the active window exceeds
+\code{delete\_thred}, factors owned by the oldest frames are removed and
+selected boundary priors are inserted.  Legacy time-differenced carrier history
+is pruned by frame and time.
+
+Ambiguity state maps and integer-hold factors follow a different lifecycle, and
+this difference is the source of one of the high-severity findings below.
+
+\section{Algorithmic flaw and risk audit}
+
+The term ``deadly'' is interpreted here as a flaw capable of producing a false
+fixed solution, silent estimator corruption, numerical failure, or unbounded
+long-run resource growth.  Static inspection cannot prove field failure rates;
+replay testing with truth and fault injection remains necessary.
+
+\begin{longtable}{>{\raggedright\arraybackslash}p{18mm}p{43mm}p{93mm}}
+\toprule
+Severity & Finding & Evidence, consequence, and recommendation \\
+\midrule
+\endfirsthead
+\toprule
+Severity & Finding & Evidence, consequence, and recommendation \\
+\midrule
+\endhead
+
+\high & Shared-reference DD correlation is omitted &
+Every target-minus-reference DD is added as an independent scalar Gaussian
+factor (around lines 1754--1761 and 1898--1915).  All DDs in a group reuse the
+same reference observation, so their noise covariance has nonzero off-diagonal
+terms containing the reference variance.  Adding the reference variance to
+each scalar diagonal does not model that correlation.  iSAM2 can consequently
+report an overconfident or distorted joint ambiguity covariance, directly
+affecting the standard-deviation gate and LAMBDA ratio.  Use a vector DD factor
+with the full covariance, whiten a single-difference vector before differencing,
+or use an undifferenced formulation with explicit receiver/base clocks. \\
+\addlinespace
+
+\high & Integer and wide-lane hold factors escape fixed-lag ownership &
+Normal DD factors append their indices to \code{factor\_ids}, but Stage-1
+wide-lane factors and Stage-2 integer priors are committed directly via
+\code{isam.update()} (around lines 2274--2286 and 2584--2591).  Their returned
+indices update \code{id\_accumulate} but are not placed in
+\code{factor\_id\_frame}.  The \code{ambiguities\_} and
+\code{wide\_lane\_fixes\_} maps are also cleared only on full reset.  Old
+ambiguity variables and hold factors can therefore remain indefinitely after
+their measurement factors leave the lag window.  This risks unbounded memory
+and Bayes-tree growth, and stale state bookkeeping.  Give every ambiguity arc
+an ownership/lifetime record and remove its measurement, prior, wide-lane, and
+integer-hold factors together after the arc is inactive and outside the window. \\
+\addlinespace
+
+\high & Wide-lane fix is irreversible before end-to-end validation &
+Stage 1 tests that a trial update is numerically solvable, then commits the
+wide-lane constraint immediately.  It does not compare float/fixed measurement
+cost, and if Stage 2 later fails the wide-lane factor remains held.  A false
+wide-lane ratio pass can thus bias future floats and make later raw fixing look
+more precise.  Perform residual/global-cost validation on the trial graph and
+commit Stage 1 and Stage 2 atomically, or explicitly retain and roll back the
+Stage-1 factor indices when downstream validation fails. \\
+\addlinespace
+
+\high & Hatch/cycle-code screening statistics are global, not per satellite &
+\code{GNSSAssignment} stores scalar \code{sum\_d} and \code{sum\_d2}, while
+\code{processGNSSBase()} resets and updates them inside processing for many
+satellites (notably lines 470--497).  The six-sigma test for one satellite can
+therefore use statistics last modified by another satellite.  This can cause
+incorrect resets or failure to reset a bad track, contaminating smoothed code
+and all downstream pseudorange factors.  Store running count, mean/M2, last
+phase, and Hatch state per satellite and frequency; use a numerically stable
+per-track variance update. \\
+\addlinespace
+
+\high & Post-fix validation observes only selected carrier DD factors &
+The trial raw fix cost sums only the latest factors of the ambiguities being
+fixed (around lines 2528--2558).  It does not check the total graph error,
+navigation displacement, pseudorange/DD-code residuals, IMU/LiDAR factors, or
+unselected carrier DDs.  The navigation state can absorb a wrong integer while
+keeping selected carrier residuals small.  Compare robust global or carefully
+partitioned costs, enforce a position jump/innovation bound, and monitor all
+current GNSS residuals before commit. \\
+\addlinespace
+
+\medium & Local-mode DD lever arm is frozen outside the attitude state &
+The caller pre-rotates the antenna lever arm using the input rover rotation;
+the local DD factor then uses $p+\ell$ and has no key/Jacobian for $R(k)$
+(carrier factor lines 33--56; pseudorange is analogous).  Yet $R(k)$ is an
+optimized graph variable.  If attitude changes during optimization, DD geometry
+is inconsistent with the optimized antenna position.  Connect local DD factors
+to $R(k)$ and use $p+R(k)T_{imu\rightarrow ant}$ with the proper Jacobian, or
+formally document and enforce attitude as fixed for these factors. \\
+\addlinespace
+
+\medium & No explicit narrow-lane stage &
+The enum and cascade helper suggest narrow-lane processing, but the active code
+constructs only $N_1-N_2$ wide-lane constraints followed by raw $N_1/N_2$
+LAMBDA.  This is not necessarily incorrect, but it is an implementation/documentation
+gap and misses explicit narrow-lane screening.  Either remove the unused
+narrow-lane terminology or implement and test the intended cascade. \\
+\addlinespace
+
+\medium & Raw Stage 2 uses only the largest constellation group &
+After eligibility, ambiguities are grouped by the target satellite constellation
+and all but the largest group are discarded for that attempt.  This sacrifices
+valid information and can starve smaller constellations indefinitely.  Resolve
+each independent constellation group separately, or form one correctly
+correlated multi-constellation system when the ambiguity definition permits it. \\
+\addlinespace
+
+\medium & Elevation used by PAR is target-only &
+DD quality depends on both target and reference elevation, but
+\code{latest\_elevation} stores only target elevation.  The elevation deletion
+method can preserve a DD with a weak reference.  Score by
+$\min(elev_s,elev_r)$ or predicted DD variance, and include both elevations in
+diagnostics. \\
+\addlinespace
+
+\medium & Slip detector is optional and limited to primary/secondary &
+When geometry-free detection is disabled, integrity relies on rover/base LLI
+and gap checks.  Receivers or RINEX conversions can miss slips, and L5/extra/wide
+bands receive no geometry-free consistency check.  Enable the detector after
+noise-aware tuning, add Doppler/phase or Melbourne--W\"ubbena confirmation, and
+test simultaneous reference/target slips. \\
+\addlinespace
+
+\medium & Historical integer transfer has no independent consistency test &
+A new reference definition can inherit an integer through a graph of recent
+fixed edges and immediately receives fixed-level lock count and prior.  One
+incorrect old edge propagates to new arcs.  Require cycle consistency when
+multiple paths exist, validate the transferred integer against the current
+float residual, and expire edge history explicitly. \\
+\addlinespace
+
+\low & Robust DD code noise uses one constant sigma &
+DD pseudorange uses a configured constant sigma plus a Cauchy kernel, rather
+than propagating four code uncertainties and reference-induced correlation.
+The robust kernel limits some outliers but does not repair covariance modelling.
+Propagate rover/base code variances and use the same full-covariance strategy as
+carrier DD. \\
+\bottomrule
+\end{longtable}
+
+\section{What is already done well}
+
+Several safeguards are structurally sound:
+\begin{itemize}
+  \item integer fixing occurs after a float iSAM2 update;
+  \item ambiguity values and full joint covariance are consistently converted
+        from metres to cycles before LAMBDA;
+  \item half-cycle flags are rejected and loss-of-lock/gap events create new
+        keys rather than reusing a contaminated ambiguity;
+  \item primary and secondary use the same DD reference for wide-lane formation;
+  \item residual, lock-duration, precision, ratio, and PAR-size gates are all
+        present;
+  \item raw integer proposals are evaluated on a copy of iSAM2 before commit;
+  \item carrier factors remain Gaussian while robust weighting is isolated to
+        DD pseudorange; and
+  \item LAMBDA checks covariance finiteness, symmetry, and positive definiteness
+        and has a bounded search iteration count.
+\end{itemize}
+
+\section{Recommended remediation order}
+
+\begin{enumerate}
+  \item Model the full same-reference DD covariance and add a Monte Carlo test
+        demonstrating calibrated ambiguity covariance and false-fix rate.
+  \item Make wide-lane/raw fixing transactional with global residual and state
+        jump validation.
+  \item Implement explicit ambiguity-factor ownership and inactive-arc pruning;
+        verify bounded graph size on multi-hour replay.
+  \item Replace global Hatch screening statistics with per-satellite,
+        per-frequency state.
+  \item Correct the local lever-arm attitude dependency and validate analytic
+        Jacobians numerically.
+  \item Add fault-injection tests: target slip, reference slip, simultaneous
+        slips, base epoch gap, reference switch, half-cycle transition,
+        multipath code outlier, and wrong wide-lane candidate.
+  \item Report integrity metrics beyond FIXED/FLOAT: number fixed, subset
+        fraction, ratio, worst ambiguity sigma, maximum normalized residual,
+        post-fix total-cost change, navigation jump, and ambiguity age.
+\end{enumerate}
+
+\section{Minimum validation matrix}
+
+Before relying on integer fixes, replay truth-labelled data and record false-fix
+rate and time-to-fix under the following matrix:
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+Dimension & Cases & Required observation \\
+\midrule
+Baseline & short, medium, long & float/fixed position error and graph size \\
+Satellites & 4--6, 7--10, $>10$ & covariance calibration and PAR subset \\
+Dynamics & static, urban vehicle, aggressive turns & lever-arm/attitude sensitivity \\
+Signal & open sky, multipath, partial blockage & residual and ratio distributions \\
+Timing & aligned, boundary tolerance, missing base epochs & arc continuity behavior \\
+Slips & target, reference, dual, silent & detection latency and false-fix rate \\
+Reference & stable and forced switches & integer-transfer consistency \\
+Runtime & at least several hours & bounded variables, factors, and memory \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Conclusion}
+
+The pipeline contains a thoughtful multi-stage float-to-fixed design and more
+screening than a minimal RTK implementation.  Nevertheless, the current FIXED
+decision should not yet be treated as integrity-safe.  Shared-reference
+correlation, non-transactional wide-lane commitment, incomplete fixed-factor
+lifecycle management, and cross-satellite Hatch statistics are the priority
+issues.  Addressing those four items and validating with injected faults would
+substantially improve both correctness and operational robustness.
+
+\end{document}

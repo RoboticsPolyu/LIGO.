@@ -617,37 +617,55 @@ void GNSSAssignment::delete_variables(bool nolidar, size_t frame_delete, int fra
             gtSAMgraph.add(init_EP);
             // factor_id_frame[0].push_back(id_accumulate);
             // factor_id_frame[0].push_back(id_accumulate+1);
-            factor_id_frame[frame_num - 1 - frame_delete].push_back(id_accumulate);
-            factor_id_frame[frame_num - 1 - frame_delete].push_back(id_accumulate+1);
+            // These priors replace information from factors that are being
+            // removed.  ISAM2 retains the corresponding variables, so the
+            // replacement priors must remain for the lifetime of this graph.
             id_accumulate += 2;
             change_ext = frame_num;
         }
         size_t j = 0;
         for (; j < marg_thred; j++)
         {
-            // get updated noise before reset
-            // gtsam::noiseModel::Gaussian::shared_ptr updatedRotNoise = gtsam::noiseModel::Gaussian::Covariance(isam.marginalCovariance(R(frame_delete+j))); // important
-            // gtsam::noiseModel::Gaussian::shared_ptr updatedPosNoise = gtsam::noiseModel::Gaussian::Covariance(isam.marginalCovariance(A(frame_delete+j))); // important
-            // gtsam::noiseModel::Gaussian::shared_ptr updatedPosNoise = gtsam::noiseModel::Gaussian::Covariance(isam.marginalCovariance(F(frame_delete+j))); // important
-            // gtsam::noiseModel::Gaussian::shared_ptr updatedDtNoise = gtsam::noiseModel::Gaussian::Covariance(isam.marginalCovariance(B(frame_delete+j))); // important
-            // gtsam::noiseModel::Gaussian::shared_ptr updatedDdtNoise = gtsam::noiseModel::Gaussian::Covariance(isam.marginalCovariance(C(frame_delete+j))); // important
+            // Preserve every local-mode state block before its frame-owned
+            // factors are removed.  Keeping only B/C (the former behaviour)
+            // leaves R/A/O/G variables orphaned in iSAM2 and eventually causes
+            // IndeterminantLinearSystemException, often reported near an
+            // ambiguity key that shares the affected Bayes-tree clique.
+            const size_t boundary_frame = frame_delete + j;
+            auto updatedRotNoise = gtsam::noiseModel::Gaussian::Covariance(
+                isam.marginalCovariance(R(boundary_frame)));
+            auto updatedPosVelNoise = gtsam::noiseModel::Gaussian::Covariance(
+                isam.marginalCovariance(A(boundary_frame)));
+            auto updatedMotionBiasNoise = gtsam::noiseModel::Gaussian::Covariance(
+                isam.marginalCovariance(O(boundary_frame)));
+            auto updatedGravityNoise = gtsam::noiseModel::Gaussian::Covariance(
+                isam.marginalCovariance(G(boundary_frame)));
 
-            // gtsam::PriorFactor<gtsam::Rot3> init_rot(R(frame_delete+j),isamCurrentEstimate.at<gtsam::Rot3>(R(frame_delete+j)),updatedRotNoise); //  margrotNoise); // 
-            // gtsam::PriorFactor<gtsam::Vector12> init_vel(F(frame_delete+j), isamCurrentEstimate.at<gtsam::Vector12>(F(frame_delete+j)), updatedPosNoise); // margposNoise);
-            // gtsam::PriorFactor<gtsam::Vector6> init_vel(A(frame_delete+j), isamCurrentEstimate.at<gtsam::Vector6>(A(frame_delete+j)),updatedPosNoise); //  margposNoise); // 
+            gtsam::PriorFactor<gtsam::Rot3> init_rot(
+                R(boundary_frame), isamCurrentEstimate.at<gtsam::Rot3>(R(boundary_frame)),
+                updatedRotNoise);
+            gtsam::PriorFactor<gtsam::Vector6> init_pos_vel(
+                A(boundary_frame), isamCurrentEstimate.at<gtsam::Vector6>(A(boundary_frame)),
+                updatedPosVelNoise);
+            gtsam::PriorFactor<gtsam::Vector12> init_motion_bias(
+                O(boundary_frame), isamCurrentEstimate.at<gtsam::Vector12>(O(boundary_frame)),
+                updatedMotionBiasNoise);
+            gtsam::PriorFactor<gtsam::Vector3> init_gravity(
+                G(boundary_frame), isamCurrentEstimate.at<gtsam::Vector3>(G(boundary_frame)),
+                updatedGravityNoise);
             gtsam::PriorFactor<gtsam::Vector4> init_dt(B(frame_delete+j), isamCurrentEstimate.at<gtsam::Vector4>(B(frame_delete+j)), margdtNoise); //  updatedDtNoise); // 
             gtsam::PriorFactor<gtsam::Vector1> init_ddt(C(frame_delete+j), isamCurrentEstimate.at<gtsam::Vector1>(C(frame_delete+j)), margddtNoise); // updatedDdtNoise); // 
-            // gtSAMgraph.add(init_rot);
-            // gtSAMgraph.add(init_vel);
+            gtSAMgraph.add(init_rot);
+            gtSAMgraph.add(init_pos_vel);
+            gtSAMgraph.add(init_motion_bias);
+            gtSAMgraph.add(init_gravity);
             gtSAMgraph.add(init_dt);
             gtSAMgraph.add(init_ddt);
-            factor_id_frame[0].push_back(id_accumulate+(j)*2);
-            factor_id_frame[0].push_back(id_accumulate+1+(j)*2);
-            // factor_id_frame[0].push_back(id_accumulate+2+(j)*4);
-            // factor_id_frame[0].push_back(id_accumulate+3+(j)*4);
+            // Do not assign marginal priors to a frame ownership list.  This
+            // cleanup removes factors but does not marginalize/remove ISAM2
+            // variables; deleting these priors later would orphan R/A/O/G/B/C.
         }
-        // id_accumulate += (j-1) * 4;
-        id_accumulate += j * 2;
+        id_accumulate += j * 6;
       }
       isam.update(gtSAMgraph, initialEstimate);
       gtSAMgraph.resize(0); // will the initialEstimate change?
@@ -676,13 +694,8 @@ void GNSSAssignment::delete_variables(bool nolidar, size_t frame_delete, int fra
             gtSAMgraph.add(init_dt);
             gtSAMgraph.add(init_ddt);
             
-            {
-            factor_id_frame[0].push_back(id_accumulate+j*4);
-            factor_id_frame[0].push_back(id_accumulate+1+j*4);
-            factor_id_frame[0].push_back(id_accumulate+2+j*4);
-            factor_id_frame[0].push_back(id_accumulate+3+j*4);
-            // factor_id_frame[0].push_back(id_accumulate+4+j*4);
-            }
+            // Persistent for the same reason as the local-mode boundary
+            // priors above: old ISAM2 variables are retained by this class.
         }
         id_accumulate += j * 4;
       }

@@ -43,6 +43,7 @@
 #include <array>
 #include <cmath>
 #include <iomanip>
+#include <fstream>
 #include <limits>
 #include <memory>
 #include <set>
@@ -143,7 +144,111 @@ GNSSProcess::GNSSProcess()
   // initNoises();
 }
 
-GNSSProcess::~GNSSProcess() {}
+GNSSProcess::~GNSSProcess()
+{
+  if (ground_truth_report_.is_open()) ground_truth_report_.close();
+  if (ecef_state_output_.is_open()) ecef_state_output_.close();
+}
+
+bool GNSSProcess::configureEcefStateOutput(const std::string &output_path)
+{
+  if (ecef_state_output_.is_open()) ecef_state_output_.close();
+  ecef_state_output_.open(output_path, std::ios::out | std::ios::trunc);
+  if (!ecef_state_output_)
+  {
+    ROS_ERROR_STREAM("Cannot open ECEF state output: " << output_path);
+    return false;
+  }
+  ecef_state_output_ << std::setprecision(12)
+      << "# time imu_x imu_y imu_z antenna_x antenna_y antenna_z "
+         "vel_x vel_y vel_z qx qy qz qw ba_x ba_y ba_z bg_x bg_y bg_z "
+         "satellites frame rtk_status lambda_ratio\n";
+  ROS_INFO_STREAM("ECEF state output enabled: " << output_path);
+  return true;
+}
+
+bool GNSSProcess::configureGroundTruth(const std::string &input_path,
+                                       const std::string &output_path,
+                                       double time_offset,
+                                       double max_time_difference)
+{
+  std::ifstream input(input_path);
+  if (!input)
+  {
+    ROS_ERROR_STREAM("Cannot open ground-truth file: " << input_path);
+    return false;
+  }
+
+  ground_truth_.clear();
+  ground_truth_search_index_ = 0;
+  ground_truth_time_offset_ = time_offset;
+  ground_truth_max_time_difference_ = std::max(0.0, max_time_difference);
+  std::string line;
+  while (std::getline(input, line))
+  {
+    if (line.empty()) continue;
+    std::istringstream stream(line);
+    std::vector<double> values;
+    double value = 0.0;
+    while (stream >> value) values.push_back(value);
+    if (values.size() < 4) continue;
+
+    GroundTruthSample sample;
+    // Inertial Explorer ASCII: UTC, GPS week, GPS SOW, LLA, ECEF, ...
+    if (values.size() >= 9 && values[1] > 1000.0 && values[1] < 10000.0)
+    {
+      sample.timestamp = time2sec(gpst2time(
+          static_cast<int>(std::llround(values[1])), values[2]));
+      sample.position_ecef << values[6], values[7], values[8];
+      if (values.size() >= 25)
+      {
+        sample.velocity_ecef << values[22], values[23], values[24];
+        sample.has_velocity = true;
+      }
+      if (values.size() >= 19) sample.quality = static_cast<int>(values[18]);
+    }
+    else
+    {
+      // Simple portable format: timestamp ecef_x ecef_y ecef_z [vx vy vz quality].
+      sample.timestamp = values[0];
+      sample.position_ecef << values[1], values[2], values[3];
+      if (values.size() >= 7)
+      {
+        sample.velocity_ecef << values[4], values[5], values[6];
+        sample.has_velocity = true;
+      }
+      if (values.size() >= 8) sample.quality = static_cast<int>(values[7]);
+    }
+    if (std::isfinite(sample.timestamp) && sample.position_ecef.allFinite())
+      ground_truth_.push_back(sample);
+  }
+  std::sort(ground_truth_.begin(), ground_truth_.end(),
+            [](const GroundTruthSample &a, const GroundTruthSample &b) {
+              return a.timestamp < b.timestamp;
+            });
+  if (ground_truth_.empty())
+  {
+    ROS_ERROR_STREAM("No valid ECEF samples in ground-truth file: " << input_path);
+    return false;
+  }
+
+  ground_truth_report_.open(output_path, std::ios::out | std::ios::trunc);
+  if (!ground_truth_report_)
+  {
+    ROS_ERROR_STREAM("Cannot open ground-truth report: " << output_path);
+    ground_truth_.clear();
+    return false;
+  }
+  ground_truth_report_ << std::setprecision(12)
+      << "# estimate_time gt_time match_dt "
+         "gt_x gt_y gt_z est_x est_y est_z err_x err_y err_z "
+         "err_3d err_horizontal err_vertical "
+         "gt_vx gt_vy gt_vz est_vx est_vy est_vz vel_err_3d "
+         "gt_quality satellites frame rtk_status lambda_ratio\n";
+  ROS_INFO_STREAM("Ground-truth evaluation enabled: " << ground_truth_.size()
+                  << " samples, report=" << output_path);
+  return true;
+}
 
 void GNSSProcess::clearGnssBuffer(size_t index)
 {
@@ -219,6 +324,7 @@ void GNSSProcess::Reset()
   p_assign->factor_id_frame.clear();
   id_accumulate = 0;
   ambiguities_.clear();
+  persistent_ambiguity_factor_ids_.clear();
   wide_lane_fixes_.clear();
   geometry_free_history_.clear();
   reference_satellites_.clear();
@@ -241,6 +347,7 @@ void GNSSProcess::Reset()
   rtk_float_ambiguity_count = 0;
   rtk_fixed_ambiguity_count = 0;
   rtk_fix_status = "NOT_ATTEMPTED";
+  opt_check_state = 0;
   frame_num = 0;
   last_gnss_time = 0.0;
   first_gnss_time = 0.0;
@@ -447,7 +554,15 @@ void GNSSProcess::runISAM2opt(void) //
   if (gnss_ready)
   {
     bool delete_happen = false;
-    if (frame_num - frame_delete > delete_thred) // (graph_whole1.size() - index_delete > 4000)
+    // The legacy cleanup below removes factors but never marginalizes/removes
+    // their variables.  That is not a valid fixed-lag operation when carrier
+    // DD ambiguity keys span many frames: once the last connecting factor is
+    // removed, ISAM2 develops an orphaned Bayes-tree direction (typically
+    // reported near an old n-key such as n4).  Keep the full graph in RTK-DD
+    // mode until this path is replaced with IncrementalFixedLagSmoother (or an
+    // equivalent joint Schur-complement marginalization).
+    if (!use_double_differences &&
+        frame_num - frame_delete > delete_thred) // (graph_whole1.size() - index_delete > 4000)
     {
       // Collect all factors owned by frames leaving the active graph window.
       delete_happen = true;
@@ -460,7 +575,12 @@ void GNSSProcess::runISAM2opt(void) //
           for (size_t i = 0; i < p_assign->factor_id_frame[0].size(); i++)
           {
             {
-              delete_factor.push_back(p_assign->factor_id_frame[0][i]);
+              const size_t factor_id = p_assign->factor_id_frame[0][i];
+              if (persistent_ambiguity_factor_ids_.count(factor_id) == 0)
+                delete_factor.push_back(factor_id);
+              else
+                ROS_ERROR_STREAM("[ISAM-FACTOR-ID] protected ambiguity factor "
+                                 << factor_id << " appeared in frame cleanup");
             }
           }
           // index_delete += p_assign->factor_id_frame[0].size();
@@ -481,7 +601,19 @@ void GNSSProcess::runISAM2opt(void) //
     }
     else
     {
-      p_assign->isam.update(p_assign->gtSAMgraph, p_assign->initialEstimate);
+      const size_t expected_first_factor = id_accumulate - p_assign->gtSAMgraph.size();
+      const gtsam::ISAM2Result update_result =
+          p_assign->isam.update(p_assign->gtSAMgraph, p_assign->initialEstimate);
+      if (!update_result.newFactorsIndices.empty() &&
+          (update_result.newFactorsIndices.front() != expected_first_factor ||
+           update_result.newFactorsIndices.back() + 1 != id_accumulate))
+      {
+        ROS_ERROR_STREAM("[ISAM-FACTOR-ID] predicted=[" << expected_first_factor
+                         << ',' << id_accumulate << ") actual=["
+                         << update_result.newFactorsIndices.front() << ','
+                         << update_result.newFactorsIndices.back() + 1
+                         << ") new_factors=" << p_assign->gtSAMgraph.size());
+      }
       p_assign->gtSAMgraph.resize(0); // will the initialEstimate change?
       p_assign->initialEstimate.clear();
       p_assign->isam.update();
@@ -495,6 +627,19 @@ void GNSSProcess::runISAM2opt(void) //
     p_assign->isam.update();
   }
   p_assign->isamCurrentEstimate = p_assign->isam.calculateEstimate();
+  ++opt_check_state;
+  if(rtk_debug & opt_check_state % rtk_debug_epoch_interval == 0)
+  {
+    if (p_assign->isamCurrentEstimate.exists(E(0)))
+    {
+      const auto anchor = p_assign->isamCurrentEstimate.at<gtsam::Vector3>(E(0));
+      ROS_INFO_STREAM(std::fixed << std::setprecision(7)
+                      << "[Check State] Rover Initial Position E(0) = ["
+                      << anchor.x() << ", "
+                      << anchor.y() << ", "
+                      << anchor.z() << "]");
+    }
+  }
 
   if (nolidar) // || invalid_lidar)
   {
@@ -951,9 +1096,128 @@ bool GNSSProcess::Evaluate(state_output &state)
   // state.cov.block<6,6>(3, 3) = isam.marginalCovariance(F(frame_num-1)).block<6, 6>(0, 0);
 
   updateStateFromEstimate(state);
+  writeEcefState(time_current, state);
+  writeGroundTruthComparison(time_current, state);
   last_gnss_time = time_current;
   pruneCarrierPhaseHistoryByTime(time_current);
   return true;
+}
+
+void GNSSProcess::writeEcefState(double timestamp, const state_output &state)
+{
+  if (!ecef_state_output_) return;
+
+  Eigen::Vector3d imu_position_ecef;
+  Eigen::Vector3d antenna_position_ecef;
+  Eigen::Vector3d velocity_ecef;
+  Eigen::Matrix3d rotation_ecef;
+  Eigen::Vector3d ba = state.ba;
+  Eigen::Vector3d bg = state.bg;
+  if (nolidar)
+  {
+    imu_position_ecef = state.pos;
+    antenna_position_ecef = state.pos + state.rot * Tex_imu_r;
+    velocity_ecef = state.vel;
+    rotation_ecef = state.rot;
+  }
+  else
+  {
+    const Eigen::Vector3d anchor =
+        p_assign->isamCurrentEstimate.at<gtsam::Vector3>(E(0));
+    const Eigen::Matrix3d ecef_from_local =
+        p_assign->isamCurrentEstimate.at<gtsam::Rot3>(P(0)).matrix();
+    imu_position_ecef = anchor + ecef_from_local * state_const_.pos;
+    antenna_position_ecef = anchor + ecef_from_local *
+        (state_const_.pos + state_const_.rot * Tex_imu_r);
+    velocity_ecef = ecef_from_local * state_const_.vel;
+    rotation_ecef = ecef_from_local * state_const_.rot;
+    const auto motion_bias =
+        p_assign->isamCurrentEstimate.at<gtsam::Vector12>(O(frame_num - 1));
+    bg = motion_bias.segment<3>(6);
+    ba = motion_bias.segment<3>(9);
+  }
+  const Eigen::Quaterniond quaternion(rotation_ecef);
+  ecef_state_output_ << timestamp << ' ' << imu_position_ecef.transpose() << ' '
+      << antenna_position_ecef.transpose() << ' ' << velocity_ecef.transpose()
+      << ' ' << quaternion.x() << ' ' << quaternion.y() << ' '
+      << quaternion.z() << ' ' << quaternion.w() << ' ' << ba.transpose()
+      << ' ' << bg.transpose() << ' ' << gnss_meas_buf[0].size() << ' '
+      << frame_num << ' ' << rtk_fix_status << ' ' << last_lambda_ratio << '\n';
+}
+
+void GNSSProcess::writeGroundTruthComparison(double timestamp,
+                                             const state_output &state)
+{
+  if (ground_truth_.empty() || !ground_truth_report_) return;
+  const double target_time = timestamp + ground_truth_time_offset_;
+  while (ground_truth_search_index_ + 1 < ground_truth_.size() &&
+         ground_truth_[ground_truth_search_index_ + 1].timestamp <= target_time)
+    ++ground_truth_search_index_;
+  // Interpolation is deliberately limited to two samples that bracket the
+  // estimate. This avoids silently extrapolating beyond the GT trajectory.
+  const size_t left_index = ground_truth_search_index_;
+  if (left_index + 1 >= ground_truth_.size()) return;
+  const GroundTruthSample &left = ground_truth_[left_index];
+  const GroundTruthSample &right = ground_truth_[left_index + 1];
+  if (target_time < left.timestamp || target_time > right.timestamp) return;
+  const double left_dt = target_time - left.timestamp;
+  const double right_dt = right.timestamp - target_time;
+  if (left_dt > ground_truth_max_time_difference_ ||
+      right_dt > ground_truth_max_time_difference_)
+    return;
+  const double interval = right.timestamp - left.timestamp;
+  if (interval <= std::numeric_limits<double>::epsilon()) return;
+  const double alpha = left_dt / interval;
+
+  GroundTruthSample gt;
+  gt.timestamp = target_time;
+  gt.position_ecef =
+      (1.0 - alpha) * left.position_ecef + alpha * right.position_ecef;
+  gt.has_velocity = left.has_velocity && right.has_velocity;
+  if (gt.has_velocity)
+    gt.velocity_ecef =
+        (1.0 - alpha) * left.velocity_ecef + alpha * right.velocity_ecef;
+  gt.quality = left_dt <= right_dt ? left.quality : right.quality;
+  // Preserve synchronization observability: this is the signed offset to the
+  // nearer source sample, even though the interpolated GT is at target_time.
+  const double match_dt = left_dt <= right_dt ? -left_dt : right_dt;
+
+  Eigen::Vector3d estimate_ecef;
+  Eigen::Vector3d estimate_velocity_ecef;
+  if (nolidar)
+  {
+    estimate_ecef = state.pos + state.rot * Tex_imu_r;
+    estimate_velocity_ecef = state.vel;
+  }
+  else
+  {
+    const Eigen::Vector3d anchor =
+        p_assign->isamCurrentEstimate.at<gtsam::Vector3>(E(0));
+    const Eigen::Matrix3d ecef_from_local =
+        p_assign->isamCurrentEstimate.at<gtsam::Rot3>(P(0)).matrix();
+    estimate_ecef = anchor + ecef_from_local *
+        (state_const_.pos + state_const_.rot * Tex_imu_r);
+    estimate_velocity_ecef = ecef_from_local * state_const_.vel;
+  }
+  const Eigen::Vector3d error = estimate_ecef - gt.position_ecef;
+  const Eigen::Vector3d error_enu =
+      ecef2enu(ecef2geo(gt.position_ecef), error);
+  const double horizontal_error = error_enu.head<2>().norm();
+  const double vertical_error = error_enu.z();
+  const double velocity_error = gt.has_velocity
+      ? (estimate_velocity_ecef - gt.velocity_ecef).norm()
+      : std::numeric_limits<double>::quiet_NaN();
+  const Eigen::Vector3d gt_velocity = gt.has_velocity
+      ? gt.velocity_ecef
+      : Eigen::Vector3d::Constant(std::numeric_limits<double>::quiet_NaN());
+
+  ground_truth_report_ << timestamp << ' ' << gt.timestamp << ' ' << match_dt << ' '
+      << gt.position_ecef.transpose() << ' ' << estimate_ecef.transpose() << ' '
+      << error.transpose() << ' ' << error.norm() << ' ' << horizontal_error << ' '
+      << vertical_error << ' ' << gt_velocity.transpose() << ' '
+      << estimate_velocity_ecef.transpose() << ' ' << velocity_error << ' '
+      << gt.quality << ' ' << gnss_meas_buf[0].size() << ' ' << frame_num << ' '
+      << rtk_fix_status << ' ' << last_lambda_ratio << '\n';
 }
 
 void GNSSProcess::initializeFrameEstimate(const state_output &state)
@@ -1502,8 +1766,20 @@ void GNSSProcess::addDoubleDifferenceFactors(
       std::isfinite(double_difference_pseudorange_sigma) &&
       double_difference_pseudorange_sigma > 0.0)
   {
-    const auto pseudorange_noise = gtsam::noiseModel::Isotropic::Sigma(
-        1, double_difference_pseudorange_sigma);
+    gtsam::SharedNoiseModel pseudorange_noise =
+        gtsam::noiseModel::Isotropic::Sigma(
+            1, double_difference_pseudorange_sigma);
+    // Robustify code double differences only. Carrier DD factors below retain
+    // their propagated Gaussian models because robust carrier weighting would
+    // interfere with ambiguity covariance and integer validation.
+    if (std::isfinite(double_difference_pseudorange_robust_threshold) &&
+        double_difference_pseudorange_robust_threshold > 0.0)
+    {
+      pseudorange_noise = gtsam::noiseModel::Robust::Create(
+          gtsam::noiseModel::mEstimator::Cauchy::Create(
+              double_difference_pseudorange_robust_threshold),
+          pseudorange_noise);
+    }
     for (size_t index = 0; index < candidates.size(); ++index)
     {
       const Candidate &satellite = candidates[index];
@@ -1648,7 +1924,13 @@ void GNSSProcess::addDoubleDifferenceFactors(
       p_assign->gtSAMgraph.add(gtsam::PriorFactor<gtsam::Vector1>(
           key, gtsam::Vector1(initial_ambiguity),
           gtsam::noiseModel::Isotropic::Sigma(1, initial_sigma)));
-      factor_ids.push_back(id_accumulate++);
+      // This prior owns the ambiguity variable, not the frame that happened to
+      // create it.  Do not put it in factor_ids: frame-based removal would
+      // delete the prior while later DD carrier factors still reuse `key`,
+      // leaving one free ambiguity direction and causing
+      // IndeterminantLinearSystemException (commonly reported near n0).
+      // Carrier measurement factors remain frame-owned and are removed below.
+      persistent_ambiguity_factor_ids_.insert(id_accumulate++);
       ++new_arcs;
       if (ambiguity_existed) ++reset_arcs;
 
@@ -2087,9 +2369,14 @@ bool GNSSProcess::attemptIntegerAmbiguityResolution(double timestamp)
         const gtsam::ISAM2Result wide_fix_update =
             p_assign->isam.update(wide_fix_graph, gtsam::Values());
         if (!wide_fix_update.newFactorsIndices.empty())
+        {
+          persistent_ambiguity_factor_ids_.insert(
+              wide_fix_update.newFactorsIndices.begin(),
+              wide_fix_update.newFactorsIndices.end());
           id_accumulate = std::max(
               id_accumulate,
               wide_fix_update.newFactorsIndices.back() + size_t{1});
+        }
         p_assign->isam.update();
         p_assign->isamCurrentEstimate = p_assign->isam.calculateEstimate();
         for (size_t index = 0; index < wide_pairs.size(); ++index)
@@ -2396,8 +2683,12 @@ bool GNSSProcess::attemptIntegerAmbiguityResolution(double timestamp)
       const gtsam::ISAM2Result fix_update =
           p_assign->isam.update(p_assign->gtSAMgraph, gtsam::Values());
       if (!fix_update.newFactorsIndices.empty())
+      {
+        persistent_ambiguity_factor_ids_.insert(
+            fix_update.newFactorsIndices.begin(), fix_update.newFactorsIndices.end());
         id_accumulate = std::max(
             id_accumulate, fix_update.newFactorsIndices.back() + size_t{1});
+      }
       p_assign->gtSAMgraph.resize(0);
       p_assign->isam.update();
       p_assign->isamCurrentEstimate = p_assign->isam.calculateEstimate();

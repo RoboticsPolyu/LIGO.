@@ -206,7 +206,9 @@ void readParameters(ros::NodeHandle &nh)
         if (!nh.getParam("gnss/double_difference_sigma_floor", p_gnss->double_difference_sigma_floor))
           nh.param<double>("gnss/double_difference_sigma", p_gnss->double_difference_sigma_floor, 0.003);
         nh.param<double>("gnss/double_difference_pseudorange_sigma", p_gnss->double_difference_pseudorange_sigma, 2.0);
-        nh.param<double>("gnss/ambiguity_prior_sigma", p_gnss->ambiguity_prior_sigma, 100.0);
+        nh.param<double>("gnss/double_difference_pseudorange_robust_threshold",
+                         p_gnss->double_difference_pseudorange_robust_threshold, 1.0);
+        nh.param<double>("gnss/ambiguity_prior_sigma", p_gnss->ambiguity_prior_sigma, 1.0);
         nh.param<bool>("gnss/enable_integer_fixing", p_gnss->enable_integer_fixing, true);
         nh.param<int>("gnss/lambda_min_ambiguities", p_gnss->lambda_min_ambiguities, 4);
         nh.param<int>("gnss/lambda_min_lock_epochs", p_gnss->lambda_min_lock_epochs, 10);
@@ -236,6 +238,36 @@ void readParameters(ros::NodeHandle &nh)
         nh.param<string>("gnss/gnss_meas_topic",gnss_meas_topic,"/ublox_driver/range_meas");
         nh.param<string>("gnss/ephem_file_name",ephem_fname,"BRDM00DLR_S_20221870000_01D_MN.rnx");
         nh.param<string>("gnss/gt_file_name",gt_fname,"UrbanNav_TST_GT_raw.txt");
+        bool ecef_output_enable = true;
+        std::string ecef_output_file;
+        nh.param<bool>("gnss/ecef_output_enable", ecef_output_enable, true);
+        nh.param<string>("gnss/ecef_output_file", ecef_output_file,
+                         "state_estimate_ecef.txt");
+        if (ecef_output_enable)
+        {
+            const std::string output_path =
+                !ecef_output_file.empty() && ecef_output_file[0] == '/'
+                ? ecef_output_file : DEBUG_FILE_DIR(ecef_output_file);
+            p_gnss->configureEcefStateOutput(output_path);
+        }
+        bool ground_truth_enable = false;
+        std::string ground_truth_file, ground_truth_output;
+        double ground_truth_time_offset = 0.0, ground_truth_max_time_difference = 0.05;
+        nh.param<bool>("gnss/ground_truth_enable", ground_truth_enable, false);
+        nh.param<string>("gnss/ground_truth_file", ground_truth_file, "");
+        nh.param<string>("gnss/ground_truth_output", ground_truth_output, "gt_comparison_ecef.txt");
+        nh.param<double>("gnss/ground_truth_time_offset", ground_truth_time_offset, 0.0);
+        nh.param<double>("gnss/ground_truth_max_time_difference", ground_truth_max_time_difference, 0.05);
+        if (ground_truth_enable)
+        {
+            const std::string input_path = !ground_truth_file.empty() && ground_truth_file[0] == '/'
+                ? ground_truth_file : LOCAL_FILE_DIR(ground_truth_file);
+            const std::string output_path = !ground_truth_output.empty() && ground_truth_output[0] == '/'
+                ? ground_truth_output : DEBUG_FILE_DIR(ground_truth_output);
+            p_gnss->configureGroundTruth(input_path, output_path,
+                                         ground_truth_time_offset,
+                                         ground_truth_max_time_difference);
+        }
         nh.param<string>("nmea/ppp_file_name",ppp_fname,"TST.pos");
         nh.param<string>("gnss/gnss_iono_params_topic",gnss_iono_params_topic,"/ublox_driver/iono_params");
         nh.param<string>("gnss/rtk_pvt_topic",rtk_pvt_topic,"/ublox_driver/receiver_pvt");

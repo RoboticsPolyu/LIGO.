@@ -41,6 +41,8 @@
 
 #include <string>
 #include <tuple>
+#include <fstream>
+#include <set>
 
 #include <pcl/registration/icp.h>
 using namespace gnss_comm;
@@ -87,6 +89,13 @@ class GNSSProcess
   void inputGNSSTimeDiff(const double t_diff);
   /// Load surveyed base coordinates and frequency-tagged carrier observations.
   bool loadBaseStationFile(const std::string &path);
+  /// Load an evaluation-only ECEF ground-truth trajectory and open its report.
+  /// Ground truth is never inserted into the factor graph.
+  bool configureGroundTruth(const std::string &input_path,
+                            const std::string &output_path,
+                            double time_offset, double max_time_difference);
+  /// Open an estimate-only ECEF state log. This is independent of GT support.
+  bool configureEcefStateOutput(const std::string &output_path);
   /// Latest raw rover satellite directions that have usable broadcast ephemerides.
   const std::vector<RtkSatelliteDirection> &rawSatelliteDirections() const
   {
@@ -196,7 +205,10 @@ class GNSSProcess
   // rover/base carrier-phase standard deviations from its observations.
   double double_difference_sigma_floor = 0.003;
   double double_difference_pseudorange_sigma = 2.0;
-  double ambiguity_prior_sigma = 100.0;
+  // Cauchy scale in whitened residual units for code DD only. Set <= 0 to
+  // recover the plain Gaussian pseudorange model. Carrier DD is unaffected.
+  double double_difference_pseudorange_robust_threshold = 1.0;
+  double ambiguity_prior_sigma = 1.0;
   // Conservative LAMBDA validation and fix-and-hold thresholds.
   bool enable_integer_fixing = true;
   int lambda_min_ambiguities = 4;
@@ -222,6 +234,7 @@ class GNSSProcess
   size_t rtk_double_difference_pseudorange_factors = 0;
   size_t rtk_secondary_factors = 0;
   size_t rtk_l5_factors = 0;
+  size_t opt_check_state = 0;
   // Runtime observability for distinguishing synchronized, float, and fixed RTK.
   bool rtk_debug = true;
   int rtk_debug_epoch_interval = 10;
@@ -252,6 +265,8 @@ class GNSSProcess
     void pruneCarrierPhaseHistoryByFrame();
     void pruneCarrierPhaseHistoryByTime(double time_current);
     void normalizeLidarInformation();
+    void writeGroundTruthComparison(double timestamp, const state_output &state);
+    void writeEcefState(double timestamp, const state_output &state);
     void predictReceiverClock(double delta_t, double (&rcv_dt)[4], double &rcv_ddt) const;
     /// Refresh raw and front-end-valid sky-view layers for the current rover epoch.
     void updateRoverSatelliteDirections(
@@ -288,6 +303,9 @@ class GNSSProcess
     // (reference satellite, subject satellite, RtkSignalBand value).
     using AmbiguityId = std::tuple<uint32_t, uint32_t, uint8_t>;
     std::map<AmbiguityId, AmbiguityState> ambiguities_;
+    // Factor slots that belong to ambiguity arcs/fix-and-hold constraints,
+    // never to a frame cleanup bucket.
+    std::set<size_t> persistent_ambiguity_factor_ids_;
     struct WideLaneFixState
     {
       gtsam::Key primary_key = 0;
@@ -306,6 +324,21 @@ class GNSSProcess
     std::vector<RtkSatelliteDirection> raw_satellite_directions_;
     std::vector<RtkSatelliteDirection> valid_satellite_directions_;
     std::vector<RtkSatelliteDirection> rtk_satellite_directions_;
+
+    struct GroundTruthSample
+    {
+      double timestamp = 0.0;
+      Eigen::Vector3d position_ecef = Eigen::Vector3d::Zero();
+      Eigen::Vector3d velocity_ecef = Eigen::Vector3d::Zero();
+      int quality = -1;
+      bool has_velocity = false;
+    };
+    std::vector<GroundTruthSample> ground_truth_;
+    std::ofstream ground_truth_report_;
+    std::ofstream ecef_state_output_;
+    size_t ground_truth_search_index_ = 0;
+    double ground_truth_time_offset_ = 0.0;
+    double ground_truth_max_time_difference_ = 0.05;
 
     const ObsPtr obs;
     const EphemBasePtr ephem;

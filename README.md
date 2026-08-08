@@ -184,3 +184,41 @@ LiDAR/GNSS factor-graph replay.
         <img src="https://github.com/Joanna-HE/LIGO/blob/main/image/Sample.png" width = 75% >
     </div>
 </div>
+# Ground-truth evaluation plots
+
+When `gnss/ground_truth_enable` is enabled, plot the generated ECEF comparison
+report with:
+
+```bash
+python3 tools/plot_gt_comparison.py Log/gt_comparison_ecef.txt
+```
+
+For a non-interactive run that saves figures and a numerical summary:
+
+```bash
+python3 tools/plot_gt_comparison.py Log/gt_comparison_ecef.txt \
+  --output-dir Log/gt_plots --no-show
+```
+
+Useful filters include `--start`, `--end`, `--max-match-dt`, and `--max-error`.
+The 3D trajectory encodes time using both color and opacity. Customize it with
+`--time-cmap` (for example `plasma` or `turbo`) and `--min-alpha`.
+The tool requires NumPy and Matplotlib.
+
+```bash
+python3 -m pip install -r tools/requirements-plot.txt
+```
+
+Plot the estimate-only ECEF state log (ground truth is not required):
+
+```bash
+python3 tools/plot_ecef_state.py Log/state_estimate_ecef.txt
+```
+
+Save the ECEF trajectory, state-history dashboard, and summary without opening
+a GUI window:
+
+```bash
+python3 tools/plot_ecef_state.py Log/state_estimate_ecef.txt \
+  --position antenna --output-dir Log/ecef_plots --no-show
+```
