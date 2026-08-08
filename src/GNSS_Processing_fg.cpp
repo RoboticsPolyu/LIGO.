@@ -309,15 +309,10 @@ void GNSSProcess::Reset()
   std::map<uint32_t, double> empty_map_st;
   p_assign->sat_track_status.swap(empty_map_t);
   p_assign->sat_track_time.swap(empty_map_st);
-  p_assign->sat_track_last_time.swap(empty_map_st);
-  p_assign->hatch_filter_meas.swap(empty_map_st);
-  p_assign->last_cp_meas.swap(empty_map_st);
   p_assign->gtSAMgraph.resize(0);
   p_assign->initialEstimate.clear();
   p_assign->isamCurrentEstimate.clear();
   p_assign->hatch_tracks.clear();
-  // p_assign->hatch_filter_meas = 0;
-  // p_assign->last_cp = 0;
   // index_delete = 0;
   frame_delete = 0;
   p_assign->factor_id_frame.clear();

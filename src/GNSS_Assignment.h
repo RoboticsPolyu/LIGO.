@@ -197,14 +197,9 @@ class GNSSAssignment
         double gnss_psr_std_threshold = 30.0;
         double gnss_dopp_std_threshold = 30.0;
         double gnss_cp_std_threshold = 30;
-        // double hatch_filter_meas = 0, last_cp = 0;
         bool cp_locked = false;
         std::map<uint32_t, uint32_t> sat_track_status; //
         std::map<uint32_t, double> sat_track_time; //
-        std::map<uint32_t, double> sat_track_last_time; //
-        std::map<uint32_t, double> hatch_filter_meas; //
-        // std::map<uint32_t, double> hatch_filter_noise; //
-        std::map<uint32_t, double> last_cp_meas; //
         struct HatchTrackState
         {
           size_t count = 0;
@@ -219,8 +214,6 @@ class GNSSAssignment
         std::map<HatchTrackId, HatchTrackState> hatch_tracks;
         double gnss_elevation_threshold = 30;
         void processGNSSBase(const std::vector<ObsPtr> &gnss_meas, std::vector<double> &psr_meas, std::vector<ObsPtr> &valid_meas, std::vector<EphemBasePtr> &valid_ephems, bool gnss_ready, Eigen::Vector3d ecef_pos, double last_gnss_time_process);
-        void delete_variables(bool nolidar, size_t frame_delete, int frame_num, size_t &id_accumulate, gtsam::FactorIndices delete_factor);
-
         double str2double(const std::string &num_str);
         EphemPtr rinex_line2ephem(const std::vector<std::string> &ephem_lines);
         GloEphemPtr rinex_line2glo_ephem(const std::vector<std::string> &ephem_lines, const uint32_t gpst_leap_seconds);
