@@ -30,7 +30,9 @@ allowing stale ambiguity variables and constraints to accumulate; and (iii) the
 wide-lane constraint is committed before the raw fixing stage and has no
 measurement-cost rollback test.  These are credible false-fix or long-run
 stability risks and should be addressed before treating the FIXED flag as a
-safety-critical integrity statement.
+safety-critical integrity statement.  Section~\ref{sec:high-remediation}
+records the implemented remediation and August 2026 verification of every
+HIGH finding; the audit table is retained as the pre-remediation evidence.
 \end{abstract}
 
 \tableofcontents
@@ -436,6 +438,63 @@ Several safeguards are structurally sound:
         post-fix total-cost change, navigation jump, and ambiguity age.
 \end{enumerate}
 
+\section{HIGH-severity remediation and verification}
+\label{sec:high-remediation}
+
+Four HIGH findings have complete remedies.  The ambiguity lifecycle crash is
+contained by a verified full-graph DD mode, but bounded-memory fixed lag remains
+open and requires migration to \code{IncrementalFixedLagSmoother}:
+\begin{enumerate}
+  \item \textbf{Shared-reference covariance:} because the active graph uses
+  scalar DD factors, each same-reference group now uses the conservative
+  diagonal majorizer
+  $\sigma_i^2=v_i+m v_r+v_f$.  The difference from the exact block covariance
+  is $v_r(mI-\mathbf{1}\mathbf{1}^T)\succeq0$; consequently the scalar graph
+  cannot be more informative than the correlated block.  Unit test
+  \code{SameReferenceScalarApproximationIsConservative} verifies the PSD
+  ordering numerically.  DD code sigma is likewise inflated by $\sqrt m$.
+  This intentionally trades efficiency for covariance integrity.
+
+  \item \textbf{Ambiguity/hold lifecycle---contained, not fully closed:}
+  factor-only deletion is disabled in DD mode, preventing orphan variables and
+  the deterministic \code{n4} crash.  A direct
+  \code{ISAM2::marginalizeLeaves} attempt was rejected after testing exposed
+  that this graph's unconstrained elimination ordering does not guarantee old
+  navigation blocks are Bayes-tree leaves; it produced
+  \code{Requested to eliminate a key that is not in the factors}.  DD therefore
+  currently retains the full graph.  This is numerically stable for the tested
+  bag but grows with runtime.  The remaining production fix is to migrate DD
+  updates and key timestamps to \code{IncrementalFixedLagSmoother}, which
+  creates the required constrained ordering before marginalization.
+
+  \item \textbf{Transactional wide lane:} Stage~1 now creates a pending factor
+  graph only.  No wide-lane factor or bookkeeping is committed unless Stage~2
+  raw fixing and all post-fix checks pass.  Wide-lane and raw factors are then
+  submitted in one iSAM2 update.  Replay logs show
+  \code{WIDE-LANE VALIDATED\_PENDING} without leaked \code{FIXED} holds when the
+  downstream gates reject the candidate.
+
+  \item \textbf{Per-track Hatch screening:} count, mean, Welford $M_2$, last
+  phase/time, and smoothed code are now stored by $(\mathrm{satellite},
+  \mathrm{frequency\ index})$.  The outlier test uses deviation from that
+  track's mean rather than an absolute cycle--code value.  Unit test
+  \code{WelfordStatisticsRemainIndependentPerTrack} checks independence and
+  sample variance for two interleaved tracks.
+
+  \item \textbf{End-to-end post-fix validation:} trial validation retains the
+  selected-carrier check and additionally compares error over every existing
+  graph factor at float and trial-fixed values.  It also rejects a local/ECEF
+  navigation-position jump above
+  \code{lambda\_max\_position\_jump\_m}.  Unit test
+  \code{RequiresGlobalCostAndPositionJumpToPass} covers both rejection gates.
+\end{enumerate}
+
+The RTK core suite contains 36 tests after these additions.  The full mapping
+target builds successfully, and the supplied bag
+\code{2025-03-17-15-11-46.bag} was replayed completely at $2\times$ rate with
+DD enabled.  It reached 2910 received epochs and 1639 accumulated DD
+observations without the previous epoch-1742195647.998 crash.
+
 \section{Minimum validation matrix}
 
 Before relying on integer fixes, replay truth-labelled data and record false-fix
@@ -459,12 +518,13 @@ Runtime & at least several hours & bounded variables, factors, and memory \\
 
 \section{Conclusion}
 
-The pipeline contains a thoughtful multi-stage float-to-fixed design and more
-screening than a minimal RTK implementation.  Nevertheless, the current FIXED
-decision should not yet be treated as integrity-safe.  Shared-reference
-correlation, non-transactional wide-lane commitment, incomplete fixed-factor
-lifecycle management, and cross-satellite Hatch statistics are the priority
-issues.  Addressing those four items and validating with injected faults would
-substantially improve both correctness and operational robustness.
+Four HIGH findings identified by this audit now have implemented remedies and
+regression/replay evidence.  The lifecycle crash is safely contained, but its
+bounded-memory requirement remains HIGH until a timestamped constrained fixed-
+lag smoother replaces raw ISAM2.  The conservative covariance majorizer and
+atomic/global validation deliberately reduce fixing aggressiveness in exchange
+for integrity.  The remaining MEDIUM/LOW findings and the broader fault-
+injection matrix should still be completed before making a formal
+safety-critical integrity claim.
 
 \end{document}

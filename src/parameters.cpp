@@ -217,6 +217,7 @@ void readParameters(ros::NodeHandle &nh)
         nh.param<double>("gnss/lambda_max_normalized_residual", p_gnss->lambda_max_normalized_residual, 3.0);
         nh.param<double>("gnss/lambda_min_fix_fraction", p_gnss->lambda_min_fix_fraction, 0.7);
         nh.param<double>("gnss/lambda_postfix_cost_tolerance", p_gnss->lambda_postfix_cost_tolerance, 0.01);
+        nh.param<double>("gnss/lambda_max_position_jump_m", p_gnss->lambda_max_position_jump_m, 0.25);
         nh.param<bool>("gnss/enable_geometry_free_slip", p_gnss->enable_geometry_free_slip, false);
         nh.param<double>("gnss/rtk_geometry_free_slip_threshold", p_gnss->rtk_geometry_free_slip_threshold, 0.05);
         nh.param<double>("gnss/fixed_ambiguity_sigma_cycles", p_gnss->fixed_ambiguity_sigma_cycles, 0.001);

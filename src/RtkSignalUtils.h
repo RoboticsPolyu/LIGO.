@@ -94,6 +94,26 @@ inline bool rtkPostFixCostPasses(double float_cost, double fixed_cost,
          fixed_cost <= float_cost + tolerance;
 }
 
+inline bool rtkPostFixGlobalValidationPasses(
+    double float_cost, double fixed_cost, double cost_tolerance,
+    double position_jump_m, double maximum_position_jump_m)
+{
+  return rtkPostFixCostPasses(float_cost, fixed_cost, cost_tolerance) &&
+      std::isfinite(position_jump_m) && position_jump_m >= 0.0 &&
+      std::isfinite(maximum_position_jump_m) && maximum_position_jump_m >= 0.0 &&
+      position_jump_m <= maximum_position_jump_m;
+}
+
+inline void rtkWelfordUpdate(double sample, size_t &count,
+                             double &mean, double &m2)
+{
+  if (!std::isfinite(sample)) return;
+  ++count;
+  const double delta = sample - mean;
+  mean += delta / static_cast<double>(count);
+  m2 += delta * (sample - mean);
+}
+
 struct RtkFixedAmbiguityEdge
 {
   uint32_t reference = 0;
@@ -338,6 +358,31 @@ inline double rtkDoubleDifferenceSigmaMeters(
   return std::sqrt(satellite_single_difference_variance_m2 +
                    reference_single_difference_variance_m2 +
                    modelling_sigma_floor_m * modelling_sigma_floor_m);
+}
+
+// Conservative scalar replacement for a same-reference DD covariance block.
+// For m target DDs, Cov = diag(v_target) + v_ref*11' + floor^2*I.
+// diag(v_target + m*v_ref + floor^2) - Cov =
+// v_ref*(mI-11') is positive semidefinite.  Thus independent scalar factors
+// using this sigma cannot be more informative than the correctly correlated
+// block, avoiding the overconfidence of using only v_ref on every diagonal.
+inline double rtkCorrelationSafeDoubleDifferenceSigmaMeters(
+    double satellite_single_difference_variance_m2,
+    double reference_single_difference_variance_m2,
+    double modelling_sigma_floor_m, size_t group_target_count)
+{
+  if (group_target_count == 0 ||
+      !std::isfinite(satellite_single_difference_variance_m2) ||
+      satellite_single_difference_variance_m2 < 0.0 ||
+      !std::isfinite(reference_single_difference_variance_m2) ||
+      reference_single_difference_variance_m2 < 0.0 ||
+      !std::isfinite(modelling_sigma_floor_m) ||
+      modelling_sigma_floor_m < 0.0)
+    return std::numeric_limits<double>::quiet_NaN();
+  return std::sqrt(satellite_single_difference_variance_m2 +
+      static_cast<double>(group_target_count) *
+          reference_single_difference_variance_m2 +
+      modelling_sigma_floor_m * modelling_sigma_floor_m);
 }
 
 // Convert an ECEF satellite position into a unit line-of-sight vector in the

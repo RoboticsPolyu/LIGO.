@@ -196,7 +196,6 @@ class GNSSAssignment
         // int satno_rtk(int sys, int prn);
         double gnss_psr_std_threshold = 30.0;
         double gnss_dopp_std_threshold = 30.0;
-        double sum_d = 0, sum_d2 = 0;
         double gnss_cp_std_threshold = 30;
         // double hatch_filter_meas = 0, last_cp = 0;
         bool cp_locked = false;
@@ -206,6 +205,18 @@ class GNSSAssignment
         std::map<uint32_t, double> hatch_filter_meas; //
         // std::map<uint32_t, double> hatch_filter_noise; //
         std::map<uint32_t, double> last_cp_meas; //
+        struct HatchTrackState
+        {
+          size_t count = 0;
+          double mean_code_minus_phase = 0.0;
+          double m2_code_minus_phase = 0.0;
+          double last_time = 0.0;
+          double last_phase_m = 0.0;
+          double smoothed_code_m = 0.0;
+          bool initialized = false;
+        };
+        using HatchTrackId = std::pair<uint32_t, int>;
+        std::map<HatchTrackId, HatchTrackState> hatch_tracks;
         double gnss_elevation_threshold = 30;
         void processGNSSBase(const std::vector<ObsPtr> &gnss_meas, std::vector<double> &psr_meas, std::vector<ObsPtr> &valid_meas, std::vector<EphemBasePtr> &valid_ephems, bool gnss_ready, Eigen::Vector3d ecef_pos, double last_gnss_time_process);
         void delete_variables(bool nolidar, size_t frame_delete, int frame_num, size_t &id_accumulate, gtsam::FactorIndices delete_factor);

@@ -315,8 +315,7 @@ void GNSSProcess::Reset()
   p_assign->gtSAMgraph.resize(0);
   p_assign->initialEstimate.clear();
   p_assign->isamCurrentEstimate.clear();
-  p_assign->sum_d = 0;
-  p_assign->sum_d2 = 0;
+  p_assign->hatch_tracks.clear();
   // p_assign->hatch_filter_meas = 0;
   // p_assign->last_cp = 0;
   // index_delete = 0;
@@ -325,6 +324,7 @@ void GNSSProcess::Reset()
   id_accumulate = 0;
   ambiguities_.clear();
   persistent_ambiguity_factor_ids_.clear();
+  retired_ambiguity_keys_.clear();
   wide_lane_fixes_.clear();
   geometry_free_history_.clear();
   reference_satellites_.clear();
@@ -548,75 +548,143 @@ void GNSSProcess::processGNSS(const std::vector<ObsPtr> &gnss_meas, state_output
 
 void GNSSProcess::runISAM2opt(void) //
 {
-  gtsam::FactorIndices delete_factor;
-  gtsam::FactorIndices().swap(delete_factor);
-
   if (gnss_ready)
   {
-    bool delete_happen = false;
-    // The legacy cleanup below removes factors but never marginalizes/removes
-    // their variables.  That is not a valid fixed-lag operation when carrier
-    // DD ambiguity keys span many frames: once the last connecting factor is
-    // removed, ISAM2 develops an orphaned Bayes-tree direction (typically
-    // reported near an old n-key such as n4).  Keep the full graph in RTK-DD
-    // mode until this path is replaced with IncrementalFixedLagSmoother (or an
-    // equivalent joint Schur-complement marginalization).
-    if (!use_double_differences &&
-        frame_num - frame_delete > delete_thred) // (graph_whole1.size() - index_delete > 4000)
+    const size_t expected_first_factor =
+        id_accumulate - p_assign->gtSAMgraph.size();
+    const gtsam::ISAM2Result update_result =
+        p_assign->isam.update(p_assign->gtSAMgraph, p_assign->initialEstimate);
+    const size_t actual_first_factor = update_result.newFactorsIndices.empty()
+        ? id_accumulate : update_result.newFactorsIndices.front();
+    const size_t actual_factor_end = update_result.newFactorsIndices.empty()
+        ? id_accumulate : update_result.newFactorsIndices.back() + size_t{1};
+    if (!update_result.newFactorsIndices.empty() &&
+        (update_result.newFactorsIndices.front() != expected_first_factor ||
+         update_result.newFactorsIndices.back() + 1 != id_accumulate))
     {
-      // Collect all factors owned by frames leaving the active graph window.
-      delete_happen = true;
-      while (frame_num - frame_delete > delete_thred) // (graph_whole1.size() - index_delete > 3000)
-      {
-        if (!p_assign->factor_id_frame.empty())
-        {
-          // if (frame_delete > 0)
-          {
-          for (size_t i = 0; i < p_assign->factor_id_frame[0].size(); i++)
-          {
-            {
-              const size_t factor_id = p_assign->factor_id_frame[0][i];
-              if (persistent_ambiguity_factor_ids_.count(factor_id) == 0)
-                delete_factor.push_back(factor_id);
-              else
-                ROS_ERROR_STREAM("[ISAM-FACTOR-ID] protected ambiguity factor "
-                                 << factor_id << " appeared in frame cleanup");
-            }
-          }
-          // index_delete += p_assign->factor_id_frame[0].size();
-          }
+      ROS_ERROR_STREAM("[ISAM-FACTOR-ID] predicted=[" << expected_first_factor
+                       << ',' << id_accumulate << ") actual=["
+                       << update_result.newFactorsIndices.front() << ','
+                       << update_result.newFactorsIndices.back() + 1 << ')');
+      // marginalizeLeaves() may append linear marginal factors between normal
+      // updates. Correct the current frame's predicted ownership indices by
+      // the observed uniform slot offset before they are ever used.
+      const std::ptrdiff_t offset =
+          static_cast<std::ptrdiff_t>(actual_first_factor) -
+          static_cast<std::ptrdiff_t>(expected_first_factor);
+      if (!p_assign->factor_id_frame.empty())
+        for (size_t &factor_id : p_assign->factor_id_frame.back())
+          if (factor_id >= expected_first_factor && factor_id < id_accumulate)
+            factor_id = static_cast<size_t>(
+                static_cast<std::ptrdiff_t>(factor_id) + offset);
+    }
+    id_accumulate = std::max(id_accumulate, actual_factor_end);
+    p_assign->gtSAMgraph.resize(0);
+    p_assign->initialEstimate.clear();
+    p_assign->isam.update();
 
-          p_assign->factor_id_frame.pop_front();
-          frame_delete ++;
-        }
-        if (p_assign->factor_id_frame.empty()) break;
+    const auto key_has_factor = [&](gtsam::Key key) {
+      for (const auto &factor : p_assign->isam.getFactorsUnsafe())
+        if (factor && std::find(factor->keys().begin(), factor->keys().end(), key)
+                          != factor->keys().end())
+          return true;
+      return false;
+    };
+
+    // True fixed-lag operation: remove old state variables and let iSAM2 add
+    // the exact linear marginal factors. Deleting their factors alone leaves
+    // orphan variables and caused the repeatable IndeterminantLinearSystem n4
+    // failure in the supplied bag.
+    while (!use_double_differences && delete_thred > 0 &&
+           frame_num - frame_delete > delete_thred &&
+           !p_assign->factor_id_frame.empty())
+    {
+      gtsam::FastList<gtsam::Key> old_keys;
+      if (nolidar)
+      {
+        old_keys.push_back(R(frame_delete));
+        old_keys.push_back(F(frame_delete));
+      }
+      else
+      {
+        old_keys.push_back(R(frame_delete));
+        old_keys.push_back(A(frame_delete));
+        old_keys.push_back(O(frame_delete));
+        old_keys.push_back(G(frame_delete));
+      }
+      old_keys.push_back(B(frame_delete));
+      old_keys.push_back(C(frame_delete));
+      for (auto key = old_keys.begin(); key != old_keys.end(); )
+      {
+        if (!p_assign->isam.valueExists(*key) || !key_has_factor(*key))
+          key = old_keys.erase(key);
+        else
+          ++key;
+      }
+      if (old_keys.empty())
+      {
+        p_assign->factor_id_frame.pop_front();
+        ++frame_delete;
+        continue;
+      }
+      try
+      {
+        gtsam::FactorIndices marginal_ids, deleted_ids;
+        p_assign->isam.marginalizeLeaves(old_keys, marginal_ids, deleted_ids);
+        for (const size_t id : marginal_ids)
+          persistent_ambiguity_factor_ids_.insert(id);
+        if (!marginal_ids.empty())
+          id_accumulate = std::max(
+              id_accumulate, marginal_ids.back() + size_t{1});
+        id_accumulate = std::max(
+            id_accumulate, p_assign->isam.getFactorsUnsafe().size());
+        p_assign->factor_id_frame.pop_front();
+        ++frame_delete;
+      }
+      catch (const std::exception &exception)
+      {
+        ROS_ERROR_STREAM_THROTTLE(5.0,
+            "[ISAM-MARGINAL] retained frame=" << frame_delete
+            << " because leaf marginalization failed: " << exception.what());
+        break;
       }
     }
 
-    if (delete_happen)
+    // Once an old arc has no retained measurement factor it becomes a leaf;
+    // marginalize its prior/hold constraints and erase stale bookkeeping.
+    for (auto key = retired_ambiguity_keys_.begin();
+         key != retired_ambiguity_keys_.end(); )
     {
-      // GNSSAssignment remaps factor identifiers while marginalizing/removing
-      // old variables, so this path replaces the ordinary update below.
-      p_assign->delete_variables(nolidar, frame_delete, frame_num, id_accumulate, delete_factor);
-    }
-    else
-    {
-      const size_t expected_first_factor = id_accumulate - p_assign->gtSAMgraph.size();
-      const gtsam::ISAM2Result update_result =
-          p_assign->isam.update(p_assign->gtSAMgraph, p_assign->initialEstimate);
-      if (!update_result.newFactorsIndices.empty() &&
-          (update_result.newFactorsIndices.front() != expected_first_factor ||
-           update_result.newFactorsIndices.back() + 1 != id_accumulate))
+      if (use_double_differences)
+        break;  // These keys are not guaranteed leaves in unconstrained ISAM2.
+      if (!p_assign->isam.valueExists(*key))
       {
-        ROS_ERROR_STREAM("[ISAM-FACTOR-ID] predicted=[" << expected_first_factor
-                         << ',' << id_accumulate << ") actual=["
-                         << update_result.newFactorsIndices.front() << ','
-                         << update_result.newFactorsIndices.back() + 1
-                         << ") new_factors=" << p_assign->gtSAMgraph.size());
+        key = retired_ambiguity_keys_.erase(key);
+        continue;
       }
-      p_assign->gtSAMgraph.resize(0); // will the initialEstimate change?
-      p_assign->initialEstimate.clear();
-      p_assign->isam.update();
+      if (!key_has_factor(*key))
+      {
+        // Never ask GTSAM to eliminate an orphan key: it throws
+        // "Requested to eliminate a key that is not in the factors".
+        ++key;
+        continue;
+      }
+      try
+      {
+        gtsam::FastList<gtsam::Key> keys{*key};
+        gtsam::FactorIndices marginal_ids, deleted_ids;
+        p_assign->isam.marginalizeLeaves(keys, marginal_ids, deleted_ids);
+        if (!marginal_ids.empty())
+          id_accumulate = std::max(
+              id_accumulate, marginal_ids.back() + size_t{1});
+        id_accumulate = std::max(
+            id_accumulate, p_assign->isam.getFactorsUnsafe().size());
+        key = retired_ambiguity_keys_.erase(key);
+      }
+      catch (const std::exception &)
+      {
+        ++key;  // Still connected to a retained frame; retry next epoch.
+      }
     }
   }
   else
@@ -1757,6 +1825,17 @@ void GNSSProcess::addDoubleDifferenceFactors(
                            static_cast<uint8_t>(entry.first.second)}] =
         observations[reference.rover_index]->sat;
   }
+  std::map<ReferenceGroup, size_t> target_count_by_group;
+  for (const auto &entry : reference_by_group)
+  {
+    size_t count = 0;
+    for (size_t index = 0; index < candidates.size(); ++index)
+      if (ReferenceGroup(candidates[index].system,
+                         candidates[index].signal_band) == entry.first &&
+          index != entry.second)
+        ++count;
+    target_count_by_group[entry.first] = count;
+  }
 
   // A code double difference cancels receiver and satellite clock offsets
   // without adding an ambiguity variable. Reuse the primary carrier reference
@@ -1766,20 +1845,6 @@ void GNSSProcess::addDoubleDifferenceFactors(
       std::isfinite(double_difference_pseudorange_sigma) &&
       double_difference_pseudorange_sigma > 0.0)
   {
-    gtsam::SharedNoiseModel pseudorange_noise =
-        gtsam::noiseModel::Isotropic::Sigma(
-            1, double_difference_pseudorange_sigma);
-    // Robustify code double differences only. Carrier DD factors below retain
-    // their propagated Gaussian models because robust carrier weighting would
-    // interfere with ambiguity covariance and integer validation.
-    if (std::isfinite(double_difference_pseudorange_robust_threshold) &&
-        double_difference_pseudorange_robust_threshold > 0.0)
-    {
-      pseudorange_noise = gtsam::noiseModel::Robust::Create(
-          gtsam::noiseModel::mEstimator::Cauchy::Create(
-              double_difference_pseudorange_robust_threshold),
-          pseudorange_noise);
-    }
     for (size_t index = 0; index < candidates.size(); ++index)
     {
       const Candidate &satellite = candidates[index];
@@ -1790,6 +1855,21 @@ void GNSSProcess::addDoubleDifferenceFactors(
           reference_entry->second == index)
         continue;
       const Candidate &reference = candidates[reference_entry->second];
+      // The configured sigma describes one DD. Inflate by sqrt(m) so the
+      // independent scalar approximation is conservative for m DDs sharing
+      // this reference instead of pretending those observations are
+      // independent.
+      const double correlation_safe_sigma =
+          double_difference_pseudorange_sigma * std::sqrt(static_cast<double>(
+              std::max<size_t>(1, target_count_by_group[group])));
+      gtsam::SharedNoiseModel pseudorange_noise =
+          gtsam::noiseModel::Isotropic::Sigma(1, correlation_safe_sigma);
+      if (std::isfinite(double_difference_pseudorange_robust_threshold) &&
+          double_difference_pseudorange_robust_threshold > 0.0)
+        pseudorange_noise = gtsam::noiseModel::Robust::Create(
+            gtsam::noiseModel::mEstimator::Cauchy::Create(
+                double_difference_pseudorange_robust_threshold),
+            pseudorange_noise);
       const ObsPtr &satellite_obs = observations[satellite.rover_index];
       const ObsPtr &reference_obs = observations[reference.rover_index];
       if (static_cast<size_t>(satellite.frequency_index) >= satellite_obs->psr.size() ||
@@ -1838,10 +1918,12 @@ void GNSSProcess::addDoubleDifferenceFactors(
     const Candidate &reference = candidates[reference_by_group.at(group)];
     if (&satellite == &reference) continue;
 
-    const double measurement_sigma = rtkDoubleDifferenceSigmaMeters(
+    const double measurement_sigma =
+        rtkCorrelationSafeDoubleDifferenceSigmaMeters(
         satellite.single_difference_variance_m2,
         reference.single_difference_variance_m2,
-        double_difference_sigma_floor);
+        double_difference_sigma_floor,
+        std::max<size_t>(1, target_count_by_group[group]));
     if (!std::isfinite(measurement_sigma) || measurement_sigma <= 0.0)
       continue;
     const auto measurement_noise =
@@ -1884,6 +1966,8 @@ void GNSSProcess::addDoubleDifferenceFactors(
       // A slip, gap, reference change, or band change starts a new ambiguity
       // key so an earlier integer constraint can never contaminate this arc.
       const gtsam::Key key = gtsam::Symbol('n', next_ambiguity_id_++);
+      if (ambiguity_existed)
+        retired_ambiguity_keys_.insert(ambiguity->second.key);
       const bool integer_compatible =
           std::abs(satellite.wavelength - reference.wavelength) < 1.0e-8;
       std::vector<RtkFixedAmbiguityEdge> fixed_history;
@@ -2282,6 +2366,8 @@ bool GNSSProcess::attemptIntegerAmbiguityResolution(double timestamp)
     wide_pairs.push_back({entry.first, *entry.second.first, *entry.second.second});
   }
   bool stage1_fixed = false;
+  gtsam::NonlinearFactorGraph pending_wide_fix_graph;
+  std::vector<std::pair<WideLaneId, WideLaneFixState>> pending_wide_fixes;
   const bool stage1_required = wide_pairs.size() >= minimum;
   if (stage1_required)
   {
@@ -2360,35 +2446,25 @@ bool GNSSProcess::attemptIntegerAmbiguityResolution(double timestamp)
               gtsam::noiseModel::Isotropic::Sigma(
                   1, std::max(fixed_ambiguity_sigma_cycles, 1.0e-6))));
         }
-        // Validate the update on a copy so a numerical failure cannot leave a
-        // half-committed set of pair constraints or stale hold state.
+        // Validate on a copy, but do not commit yet. Wide-lane and raw fixes
+        // are one transaction: if downstream raw/global validation fails,
+        // no Stage-1 constraint is allowed to leak into the live graph.
         gtsam::ISAM2 trial_isam = p_assign->isam;
         trial_isam.update(wide_fix_graph, gtsam::Values());
         trial_isam.update();
         (void)trial_isam.calculateEstimate();
-        const gtsam::ISAM2Result wide_fix_update =
-            p_assign->isam.update(wide_fix_graph, gtsam::Values());
-        if (!wide_fix_update.newFactorsIndices.empty())
-        {
-          persistent_ambiguity_factor_ids_.insert(
-              wide_fix_update.newFactorsIndices.begin(),
-              wide_fix_update.newFactorsIndices.end());
-          id_accumulate = std::max(
-              id_accumulate,
-              wide_fix_update.newFactorsIndices.back() + size_t{1});
-        }
-        p_assign->isam.update();
-        p_assign->isamCurrentEstimate = p_assign->isam.calculateEstimate();
+        pending_wide_fix_graph = wide_fix_graph;
+        pending_wide_fixes.clear();
         for (size_t index = 0; index < wide_pairs.size(); ++index)
-          wide_lane_fixes_[wide_pairs[index].id] = {
+          pending_wide_fixes.push_back({wide_pairs[index].id, {
               wide_pairs[index].primary.state->key,
               wide_pairs[index].secondary.state->key,
-              fixed_integers[index]};
+              fixed_integers[index]}});
         last_lambda_ratio = ratio;
         stage1_fixed = true;
-        ROS_INFO_STREAM("[RTK-LAMBDA] WIDE-LANE FIXED pairs="
+        ROS_INFO_STREAM("[RTK-LAMBDA] WIDE-LANE VALIDATED_PENDING pairs="
                         << wide_pairs.size() << " ratio=" << ratio
-                        << "; graph re-optimized before raw Stage 2");
+                        << "; awaiting atomic raw/global validation");
         break;
       }
       catch (const std::exception &exception)
@@ -2406,8 +2482,8 @@ bool GNSSProcess::attemptIntegerAmbiguityResolution(double timestamp)
     return false;
   }
 
-  // Stage 2 uses raw N1/N2 states. Since Stage 1 was committed above, this
-  // newly requested marginal is the covariance conditional on fixed N1-N2.
+  // Stage 2 uses the conservative unconditioned raw covariance. The pending
+  // wide-lane constraints are included in the trial/commit transaction below.
   std::map<uint32_t, std::vector<EligibleAmbiguity>> groups;
   for (const EligibleAmbiguity &ambiguity : eligible)
   {
@@ -2608,6 +2684,8 @@ bool GNSSProcess::attemptIntegerAmbiguityResolution(double timestamp)
       double float_cost = 0.0;
       double fixed_cost = 0.0;
       gtsam::NonlinearFactorGraph trial_fix_graph;
+      for (const auto &factor : pending_wide_fix_graph)
+        if (factor) trial_fix_graph.add(factor);
       for (size_t index = 0; index < eligible.size(); ++index)
       {
         const AmbiguityState &ambiguity = *eligible[index].state;
@@ -2653,6 +2731,51 @@ bool GNSSProcess::attemptIntegerAmbiguityResolution(double timestamp)
         continue;
       }
 
+      // Whole-graph validation catches a wrong integer that navigation, code,
+      // IMU/LiDAR, or an unselected carrier factor must absorb. Proposed
+      // priors themselves are excluded from both costs to avoid biasing the
+      // comparison merely because the fixed graph has additional factors.
+      const auto existing_graph_error = [&](const gtsam::Values &values) {
+        double error = 0.0;
+        for (const auto &factor : p_assign->isam.getFactorsUnsafe())
+          if (factor) error += factor->error(values);
+        return error;
+      };
+      const double float_global_cost =
+          existing_graph_error(p_assign->isamCurrentEstimate);
+      const double fixed_global_cost = existing_graph_error(fixed_values);
+      Eigen::Vector3d float_position, fixed_position;
+      if (nolidar)
+      {
+        float_position = p_assign->isamCurrentEstimate
+            .at<gtsam::Vector12>(F(frame_num - 1)).head<3>();
+        fixed_position = fixed_values
+            .at<gtsam::Vector12>(F(frame_num - 1)).head<3>();
+      }
+      else
+      {
+        float_position = p_assign->isamCurrentEstimate
+            .at<gtsam::Vector6>(A(frame_num - 1)).head<3>();
+        fixed_position = fixed_values
+            .at<gtsam::Vector6>(A(frame_num - 1)).head<3>();
+      }
+      const double position_jump = (fixed_position - float_position).norm();
+      if (!rtkPostFixGlobalValidationPasses(
+              float_global_cost, fixed_global_cost,
+              lambda_postfix_cost_tolerance, position_jump,
+              lambda_max_position_jump_m))
+      {
+        rtk_fix_status = "FLOAT_REJECTED_GLOBAL_VALIDATION";
+        ROS_WARN_STREAM("[RTK-LAMBDA] global validation rejected subset="
+                        << eligible.size() << " float_graph_cost="
+                        << float_global_cost << " fixed_graph_cost="
+                        << fixed_global_cost << " position_jump_m="
+                        << position_jump << " max_jump_m="
+                        << lambda_max_position_jump_m);
+        eligible.erase(eligible.begin() + worst_index);
+        continue;
+      }
+
       for (size_t index = 0; index < eligible.size(); ++index)
       {
         AmbiguityState &ambiguity = *eligible[index].state;
@@ -2662,9 +2785,6 @@ bool GNSSProcess::attemptIntegerAmbiguityResolution(double timestamp)
           static_cast<double>(ambiguity.fixed_integer) * ambiguity.wavelength;
         const double sigma =
           std::max(fixed_ambiguity_sigma_cycles * ambiguity.wavelength, 1.0e-6);
-        p_assign->gtSAMgraph.add(gtsam::PriorFactor<gtsam::Vector1>(
-            ambiguity.key, gtsam::Vector1(fixed_value),
-            gtsam::noiseModel::Isotropic::Sigma(1, sigma)));
         ROS_INFO_STREAM(
             "[RTK-LAMBDA] FIXED key=" << gtsam::DefaultKeyFormatter(ambiguity.key)
             << " ref=" << sat2str(std::get<0>(eligible[index].id))
@@ -2681,7 +2801,7 @@ bool GNSSProcess::attemptIntegerAmbiguityResolution(double timestamp)
       // Fix-and-hold: commit integer priors and immediately recalculate the
       // navigation estimate before Evaluate() exports it.
       const gtsam::ISAM2Result fix_update =
-          p_assign->isam.update(p_assign->gtSAMgraph, gtsam::Values());
+          p_assign->isam.update(trial_fix_graph, gtsam::Values());
       if (!fix_update.newFactorsIndices.empty())
       {
         persistent_ambiguity_factor_ids_.insert(
@@ -2689,9 +2809,10 @@ bool GNSSProcess::attemptIntegerAmbiguityResolution(double timestamp)
         id_accumulate = std::max(
             id_accumulate, fix_update.newFactorsIndices.back() + size_t{1});
       }
-      p_assign->gtSAMgraph.resize(0);
       p_assign->isam.update();
       p_assign->isamCurrentEstimate = p_assign->isam.calculateEstimate();
+      for (const auto &pending : pending_wide_fixes)
+        wide_lane_fixes_[pending.first] = pending.second;
       integer_solution_available = true;
       ++rtk_fix_successes;
       rtk_fixed_ambiguity_count += eligible.size();

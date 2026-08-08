@@ -502,6 +502,28 @@ TEST(RtkNoiseModel, RejectsInvalidUncertaintyInputs)
       1.0e-5, -1.0e-5, 0.003)));
 }
 
+TEST(RtkNoiseModel, SameReferenceScalarApproximationIsConservative)
+{
+  const size_t targets = 4;
+  const double target_variance = 4.0e-6;
+  const double reference_variance = 9.0e-6;
+  const double floor = 0.001;
+  const double sigma = rtkCorrelationSafeDoubleDifferenceSigmaMeters(
+      target_variance, reference_variance, floor, targets);
+  ASSERT_TRUE(std::isfinite(sigma));
+  Eigen::MatrixXd exact =
+      target_variance * Eigen::MatrixXd::Identity(targets, targets) +
+      reference_variance * Eigen::MatrixXd::Ones(targets, targets) +
+      floor * floor * Eigen::MatrixXd::Identity(targets, targets);
+  Eigen::MatrixXd conservative =
+      sigma * sigma * Eigen::MatrixXd::Identity(targets, targets);
+  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> solver(conservative - exact);
+  ASSERT_EQ(solver.info(), Eigen::Success);
+  EXPECT_GE(solver.eigenvalues().minCoeff(), -1.0e-15);
+  EXPECT_GT(sigma, rtkDoubleDifferenceSigmaMeters(
+      target_variance, reference_variance, floor));
+}
+
 TEST(RtkResidualScreening, NormalizesAndRejectsCarrierOutliers)
 {
   EXPECT_NEAR(rtkStandardizedResidual(0.024, 0.008), 3.0, 1.0e-12);
@@ -638,6 +660,32 @@ TEST(RtkFixConfirmation, RejectsPostFixCostIncrease)
   EXPECT_FALSE(rtkPostFixCostPasses(12.0, 12.011, 0.01));
   EXPECT_FALSE(rtkPostFixCostPasses(
       12.0, std::numeric_limits<double>::quiet_NaN(), 0.01));
+}
+
+TEST(RtkFixConfirmation, RequiresGlobalCostAndPositionJumpToPass)
+{
+  EXPECT_TRUE(rtkPostFixGlobalValidationPasses(
+      10.0, 10.05, 0.1, 0.1, 0.25));
+  EXPECT_FALSE(rtkPostFixGlobalValidationPasses(
+      10.0, 10.11, 0.1, 0.1, 0.25));
+  EXPECT_FALSE(rtkPostFixGlobalValidationPasses(
+      10.0, 10.05, 0.1, 0.251, 0.25));
+}
+
+TEST(HatchScreening, WelfordStatisticsRemainIndependentPerTrack)
+{
+  size_t count_a = 0, count_b = 0;
+  double mean_a = 0.0, mean_b = 0.0, m2_a = 0.0, m2_b = 0.0;
+  for (double value : {1.0, 2.0, 3.0})
+    rtkWelfordUpdate(value, count_a, mean_a, m2_a);
+  for (double value : {100.0, 102.0})
+    rtkWelfordUpdate(value, count_b, mean_b, m2_b);
+  EXPECT_EQ(count_a, 3U);
+  EXPECT_NEAR(mean_a, 2.0, 1.0e-15);
+  EXPECT_NEAR(m2_a / static_cast<double>(count_a - 1), 1.0, 1.0e-15);
+  EXPECT_EQ(count_b, 2U);
+  EXPECT_NEAR(mean_b, 101.0, 1.0e-15);
+  EXPECT_NEAR(m2_b / static_cast<double>(count_b - 1), 2.0, 1.0e-15);
 }
 
 TEST(RtkHistoricalMatch, PreservesIntegerAcrossReferenceChange)

@@ -60,7 +60,7 @@ gnss:
     psr_dopp_weight: 1 # 10
     cp_weight: 10 
     # Float RTK: base epochs must use the same GPST seconds as rover observations.
-    use_double_differences: false
+    use_double_differences: true
     use_dd_pseudorange: true      # add primary-band code DD factors
     use_dd_carrier: true                # add carrier DD factors and ambiguities
     use_secondary: true                # GPS L2, Galileo E5b, BeiDou B2
@@ -98,6 +98,7 @@ gnss:
     lambda_min_fix_fraction: 0.3
     # The maximum fraction of ambiguities that can be fixed to accept a solution.
     lambda_postfix_cost_tolerance: 0.1
+    lambda_max_position_jump_m: 0.25
 
     # Optional dual-frequency geometry-free cycle-slip detector.
     enable_geometry_free_slip: true

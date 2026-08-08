@@ -35,6 +35,7 @@
  */
 
 #include "GNSS_Assignment.h"
+#include "RtkSignalUtils.h"
 
 GNSSAssignment::GNSSAssignment() : process_feat_num(0) {
     // fout_std.open((string(string(ROOT_DIR) + "Log/"+ "std.txt")), ios::out);
@@ -365,140 +366,58 @@ void GNSSAssignment::processGNSSBase(const std::vector<ObsPtr> &gnss_meas, std::
     // printf("%f,%f,%f\n", obs->psr[freq_idx_], obs->dopp[freq_idx_] * LIGHT_SPEED / freq, LIGHT_SPEED / freq);
     // num_std++;
     // ave_std = double(num_std - 1) / double(num_std) * ave_std + 1 / double(num_std) * obs->psr_std[freq_idx_];
-    double dis_integer = obs->cp[freq_idx_] * LIGHT_SPEED / freq - obs->psr[freq_idx_];
-    if (gnss_ready)
+    if (obs->psr_std[freq_idx_] > gnss_psr_std_threshold ||
+        obs->dopp_std[freq_idx_] > gnss_dopp_std_threshold ||
+        obs->cp_std[freq_idx_] > gnss_cp_std_threshold)
     {
-        if (obs->psr_std[freq_idx_]  > gnss_psr_std_threshold ||
-            obs->dopp_std[freq_idx_] > gnss_dopp_std_threshold ||
-            obs->cp_std[freq_idx_] > gnss_cp_std_threshold )
-        {
-            sat_track_status[obs->sat] = 0;
-            continue;
-        }
-        else
-        {
-            if (sat_track_status.count(obs->sat) == 0)
-            {
-                sat_track_status[obs->sat] = 0;
-                sat_track_time[obs->sat] = obs_time;
-                sat_track_last_time[obs->sat] = obs_time;
-                sum_d = dis_integer;
-                sum_d2 = sum_d * sum_d;
-                hatch_filter_meas[obs->sat] = obs->psr[freq_idx_];
-                // hatch_filter_noise[obs->sat] = obs->psr_std[freq_idx_];
-                last_cp_meas[obs->sat] = obs->cp[freq_idx_] * LIGHT_SPEED / freq;
-            }
-            else
-            {
-                if (sat_track_status[obs->sat] == 0)
-                {
-                    sat_track_status[obs->sat] = 0;
-                    sat_track_time[obs->sat] = obs_time;
-                    sat_track_last_time[obs->sat] = obs_time;
-                    sum_d = dis_integer;
-                    sum_d2 = sum_d * sum_d;
-                    hatch_filter_meas[obs->sat] = obs->psr[freq_idx_];
-                    // hatch_filter_noise[obs->sat] = obs->psr_std[freq_idx_];
-                    last_cp_meas[obs->sat] = obs->cp[freq_idx_] * LIGHT_SPEED / freq;
-                }
-            }
-            ++ sat_track_status[obs->sat];
-        }
+      sat_track_status[obs->sat] = 0;
+      hatch_tracks.erase({obs->sat, freq_idx_});
+      continue;
+    }
+
+    const double phase_m = obs->cp[freq_idx_] * LIGHT_SPEED / freq;
+    const double code_minus_phase = obs->psr[freq_idx_] - phase_m;
+    HatchTrackState &track = hatch_tracks[{obs->sat, freq_idx_}];
+    const bool gap = track.initialized && obs_time - track.last_time > 15.0;
+    double innovation_sigma = std::numeric_limits<double>::infinity();
+    if (track.count > 1)
+      innovation_sigma = std::sqrt(std::max(
+          track.m2_code_minus_phase / static_cast<double>(track.count - 1), 0.0));
+    const bool cycle_code_outlier = track.count >= 5 &&
+        std::isfinite(innovation_sigma) && innovation_sigma > 1.0e-3 &&
+        std::abs(code_minus_phase - track.mean_code_minus_phase) >
+            6.0 * innovation_sigma;
+    if (!track.initialized || gap || cycle_code_outlier ||
+        !std::isfinite(phase_m) || phase_m < 100.0)
+    {
+      track = HatchTrackState{};
+      track.count = 1;
+      track.mean_code_minus_phase = code_minus_phase;
+      track.last_time = obs_time;
+      track.last_phase_m = phase_m;
+      track.smoothed_code_m = obs->psr[freq_idx_];
+      track.initialized = true;
     }
     else
     {
-        if (obs->psr_std[freq_idx_]  > gnss_psr_std_threshold||
-            obs->dopp_std[freq_idx_] > gnss_dopp_std_threshold ||
-            obs->cp_std[freq_idx_] > gnss_cp_std_threshold)
-        {
-            sat_track_status[obs->sat] = 0;
-            continue;
-        }
-        else
-        {
-            if (sat_track_status.count(obs->sat) == 0)
-            {
-                sat_track_status[obs->sat] = 0;
-                sat_track_last_time[obs->sat] = obs_time;
-                sat_track_time[obs->sat] = obs_time;
-                sum_d = dis_integer;
-                sum_d2 = sum_d * sum_d;
-                hatch_filter_meas[obs->sat] = obs->psr[freq_idx_];
-                // hatch_filter_noise[obs->sat] = obs->psr_std[freq_idx_];
-                last_cp_meas[obs->sat] = obs->cp[freq_idx_] * LIGHT_SPEED / freq;
-            }
-            else
-            {
-                if (sat_track_status[obs->sat] == 0)
-                {
-                    sat_track_status[obs->sat] = 0;
-                    sat_track_time[obs->sat] = obs_time;
-                    sat_track_last_time[obs->sat] = obs_time;
-                    sum_d = dis_integer;
-                    sum_d2 = sum_d * sum_d;
-                    hatch_filter_meas[obs->sat] = obs->psr[freq_idx_];
-                    // hatch_filter_noise[obs->sat] = obs->psr_std[freq_idx_];
-                    last_cp_meas[obs->sat] = obs->cp[freq_idx_] * LIGHT_SPEED / freq;
-                }
-            }
-            ++ sat_track_status[obs->sat];
-            // sat_track_last_time[obs->sat] = obs_time;
-        }
+      const size_t old_count = track.count;
+      rtkWelfordUpdate(code_minus_phase, track.count,
+                       track.mean_code_minus_phase,
+                       track.m2_code_minus_phase);
+      track.smoothed_code_m = obs->psr[freq_idx_] / static_cast<double>(track.count) +
+          static_cast<double>(old_count) / static_cast<double>(track.count) *
+              (track.smoothed_code_m + phase_m - track.last_phase_m);
+      track.last_time = obs_time;
+      track.last_phase_m = phase_m;
+      obs->psr_std[freq_idx_] = std::sqrt(
+          obs->psr_std[freq_idx_] * obs->psr_std[freq_idx_] / 2.0 +
+          std::pow(obs->cp_std[freq_idx_] * LIGHT_SPEED / freq, 2));
     }
-    
-    if (last_cp_meas[obs->sat] < 100)
-    {
-        sat_track_status[obs->sat] = 0;
-        hatch_filter_meas[obs->sat] = obs->psr[freq_idx_];
-        // hatch_filter_noise[obs->sat] = obs->psr_std[freq_idx_];
-    }
-    else
-    {
-    if (obs_time - sat_track_last_time[obs->sat] > 15)
-    {
-        sat_track_status[obs->sat] = 1;
-        sat_track_last_time[obs->sat] = obs_time;
-        sat_track_time[obs->sat] = obs_time;
-        sum_d = dis_integer; 
-        sum_d2 = sum_d * sum_d;
-        hatch_filter_meas[obs->sat] = obs->psr[freq_idx_];
-        // hatch_filter_noise[obs->sat] = obs->psr_std[freq_idx_];
-        last_cp_meas[obs->sat] = obs->cp[freq_idx_] * LIGHT_SPEED / freq;
-    }
-    else
-    {
-        if (sat_track_status[obs->sat] > 1) // problem!
-        {
-            // if (obs->status[freq_idx_])
-            if (fabs(dis_integer) > 6 * sqrt(sum_d2 / sat_track_status[obs->sat] - sum_d * sum_d / sat_track_status[obs->sat] / sat_track_status[obs->sat])) // ?
-            {
-                sat_track_status[obs->sat] = 1;
-                sat_track_last_time[obs->sat] = obs_time;
-                sat_track_time[obs->sat] = obs_time;
-                sum_d = dis_integer; 
-                sum_d2 = sum_d * sum_d;
-                hatch_filter_meas[obs->sat] = obs->psr[freq_idx_];
-                // hatch_filter_noise[obs->sat] = obs->psr_std[freq_idx_];
-                last_cp_meas[obs->sat] = obs->cp[freq_idx_] * LIGHT_SPEED / freq;
-            }
-            else
-            {
-                sum_d += dis_integer;
-                sum_d2 += dis_integer * dis_integer;
-                sat_track_last_time[obs->sat] = obs_time;
-                // if (last_cp_meas[obs->sat] > 10 && obs->cp[freq_idx_] * LIGHT_SPEED / freq > 10)
-                {
-                    double last_psr = hatch_filter_meas[obs->sat];
-                    hatch_filter_meas[obs->sat] = 1 / double(sat_track_status[obs->sat]) * obs->psr[freq_idx_] + double(sat_track_status[obs->sat]-1)/double(sat_track_status[obs->sat]) 
-                                        * (last_psr + obs->cp[freq_idx_] * LIGHT_SPEED / freq - last_cp_meas[obs->sat]); // obs->psr[freq_idx_];
-                    obs->psr_std[freq_idx_] = std::sqrt(obs->psr_std[freq_idx_] * obs->psr_std[freq_idx_] / 2 + obs->cp_std[freq_idx_] * obs->cp_std[freq_idx_] * LIGHT_SPEED / freq * LIGHT_SPEED / freq);
-                    // cout << "check after:" << hatch_filter_meas[obs->sat] << ";" << obs->psr[freq_idx_] << ";" << obs->cp[freq_idx_] * LIGHT_SPEED / freq << ";" << last_cp_meas[obs->sat] << endl;
-                }
-                last_cp_meas[obs->sat] = obs->cp[freq_idx_] * LIGHT_SPEED / freq;
-            }
-        }
-    }
-    }
+    sat_track_status[obs->sat] = static_cast<uint32_t>(track.count);
+    sat_track_time[obs->sat] = track.last_time;
+    sat_track_last_time[obs->sat] = track.last_time;
+    hatch_filter_meas[obs->sat] = track.smoothed_code_m;
+    last_cp_meas[obs->sat] = track.last_phase_m;
     if (!ephem_from_rinex)
     {
       // if not got cooresponding ephemeris yet

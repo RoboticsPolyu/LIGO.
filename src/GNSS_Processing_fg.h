@@ -221,6 +221,7 @@ class GNSSProcess
   double lambda_min_fix_fraction = 0.7;
   // Maximum allowed increase of current normalized DD cost before commit.
   double lambda_postfix_cost_tolerance = 0.01;
+  double lambda_max_position_jump_m = 0.25;
   // Optional dual-frequency rover-minus-base geometry-free slip detector.
   bool enable_geometry_free_slip = false;
   double rtk_geometry_free_slip_threshold = 0.05;
@@ -306,6 +307,7 @@ class GNSSProcess
     // Factor slots that belong to ambiguity arcs/fix-and-hold constraints,
     // never to a frame cleanup bucket.
     std::set<size_t> persistent_ambiguity_factor_ids_;
+    std::set<gtsam::Key> retired_ambiguity_keys_;
     struct WideLaneFixState
     {
       gtsam::Key primary_key = 0;
